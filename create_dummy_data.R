@@ -1,53 +1,112 @@
 library(arrow)
-
 set.seed(123)
-n_genes <- 200
 
-# Genes DataFrame
-genes_df <- data.frame(
-  GeneID = sprintf("G%05d", 1:n_genes),
-  GeneSymbol = paste0("Gene", 1:n_genes),
-  stringsAsFactors = FALSE
+num_genes <- 20000
+gene_ids <- sprintf("G%05d", 1:num_genes)
+
+# Genes (one-to-one)
+genes <- data.frame(
+  GeneID = gene_ids,
+  GeneSymbol = paste0("Gene", 1:num_genes),
+  Chromosome = sample(c(1:22, "X", "Y"), num_genes, replace = TRUE),
+  Position = sample(1e6:1e8, num_genes)
 )
-# Introduce NAs in ~5% of GeneSymbol
-na_idx <- sample(1:n_genes, size = round(n_genes * 0.05))
-genes_df$GeneSymbol[na_idx] <- NA
-write_parquet(genes_df, "genes.parquet")
 
-# Metrics DataFrame: each gene gets 1-3 rows
-metrics_list <- lapply(genes_df$GeneID, function(g) {
-  n <- sample(1:3, 1)
+# Phenotypes (one-to-many)
+phenotypes <- do.call(rbind, lapply(gene_ids, function(id) {
   data.frame(
-    GeneID = rep(g, n),
-    Essentiality_Metric = sample(c("Metric_A", "Metric_B", "Metric_C"), n, replace = TRUE),
-    Score = round(runif(n, 0, 1), 2),
-    stringsAsFactors = FALSE
+    GeneID = id,
+    Phenotype = sample(paste("Phenotype", LETTERS), sample(1:4, 1)),
+    Severity = sample(1:10, 1),
+    Prevalence = runif(1)
   )
-})
-metrics_df <- do.call(rbind, metrics_list)
-# Introduce NAs in ~10% of rows for Essentiality_Metric and Score
-na_rows <- sample(1:nrow(metrics_df), size = round(0.1 * nrow(metrics_df)))
-metrics_df$Essentiality_Metric[na_rows] <- NA
-na_rows_score <- sample(1:nrow(metrics_df), size = round(0.1 * nrow(metrics_df)))
-metrics_df$Score[na_rows_score] <- NA
-write_parquet(metrics_df, "metrics.parquet")
+}))
 
-# Pathways DataFrame: each gene gets 1-2 rows
-pathways_list <- lapply(genes_df$GeneID, function(g) {
-  n <- sample(1:2, 1)
+# Constraints (one-to-many)
+constraints <- do.call(rbind, lapply(gene_ids, function(id) {
   data.frame(
-    GeneID = rep(g, n),
-    Pathway = sample(c("Pathway_X", "Pathway_Y", "Pathway_Z", "Pathway_W"), n, replace = TRUE),
-    Importance = sample(1:20, n, replace = TRUE),
-    stringsAsFactors = FALSE
+    GeneID = id,
+    ConstraintMetric = sample(c("High", "Moderate", "Low"), sample(1:3, 1)),
+    Score = runif(1),
+    Confidence = sample(c("High", "Medium", "Low"), 1)
   )
-})
-pathways_df <- do.call(rbind, pathways_list)
-# Introduce NAs in ~10% of rows for Pathway and Importance
-na_rows_path <- sample(1:nrow(pathways_df), size = round(0.1 * nrow(pathways_df)))
-pathways_df$Pathway[na_rows_path] <- NA
-na_rows_imp <- sample(1:nrow(pathways_df), size = round(0.1 * nrow(pathways_df)))
-pathways_df$Importance[na_rows_imp] <- NA
-write_parquet(pathways_df, "pathways.parquet")
+}))
 
-cat("Parquet files generated: genes.parquet, metrics.parquet, pathways.parquet\n")
+# Expression (one-to-one)
+expression <- data.frame(
+  GeneID = gene_ids,
+  Tissue = sample(c("Brain", "Heart", "Liver", "Kidney"), num_genes, replace = TRUE),
+  TPM = runif(num_genes, 0, 100)
+)
+
+# Pathways (one-to-many)
+pathways <- do.call(rbind, lapply(gene_ids, function(id) {
+  data.frame(
+    GeneID = id,
+    Pathway = sample(paste("Pathway", LETTERS), sample(1:3, 1)),
+    Importance = runif(1, 0, 1)
+  )
+}))
+
+# Variants (one-to-many)
+variants <- do.call(rbind, lapply(gene_ids, function(id) {
+  data.frame(
+    GeneID = id,
+    VariantType = sample(c("Missense", "Nonsense", "Synonymous"), sample(1:2, 1)),
+    Frequency = runif(1, 0, 0.05)
+  )
+}))
+
+# Publications (one-to-many)
+publications <- do.call(rbind, lapply(gene_ids, function(id) {
+  data.frame(
+    GeneID = id,
+    PMID = sample(10000000:99999999, sample(1:5, 1)),
+    Year = sample(1990:2025, 1)
+  )
+}))
+
+# Protein Interactions (one-to-many)
+protein_interactions <- do.call(rbind, lapply(gene_ids, function(id) {
+  data.frame(
+    GeneID = id,
+    InteractionPartner = paste0("Gene", sample(1:num_genes, sample(1:3, 1))),
+    InteractionStrength = runif(1)
+  )
+}))
+
+# Disease Associations (one-to-many)
+disease_associations <- do.call(rbind, lapply(gene_ids, function(id) {
+  data.frame(
+    GeneID = id,
+    Disease = sample(paste("Disease", LETTERS), sample(1:2, 1)),
+    AssociationScore = runif(1)
+  )
+}))
+
+# Functional Annotations (one-to-many)
+functional_annotations <- do.call(rbind, lapply(gene_ids, function(id) {
+  data.frame(
+    GeneID = id,
+    Annotation = sample(c("GO:0008150", "GO:0003674", "GO:0005575"), sample(1:3, 1)),
+    Evidence = sample(c("EXP", "IDA", "IEA"), 1)
+  )
+}))
+
+# Write all tables to Parquet files
+tables <- list(
+  genes = genes,
+  phenotypes = phenotypes,
+  constraints = constraints,
+  expression = expression,
+  pathways = pathways,
+  variants = variants,
+  publications = publications,
+  protein_interactions = protein_interactions,
+  disease_associations = disease_associations,
+  functional_annotations = functional_annotations
+)
+
+lapply(names(tables), function(tbl) {
+  write_parquet(tables[[tbl]], paste0(tbl, ".parquet"))
+})
