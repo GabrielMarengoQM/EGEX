@@ -7,129 +7,171 @@ library(plotly)
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
-tables <- dbListTables(con)
+# Get all table names; exclude "aggregated" for the individual table tabs.
+all_tables <- dbListTables(con)
+individual_tables <- setdiff(all_tables, "aggregated")
 
-# UI Definition: Dynamic tabs for each table.
 ui <- fluidPage(
   theme = bs_theme(bootswatch = "flatly"),
-  titlePanel("Dynamic DuckDB SQL-powered Explorer"),
-  do.call(tabsetPanel,
-          lapply(tables, function(tbl) {
-            tabPanel(tbl,
-                     sidebarLayout(
-                       sidebarPanel(
-                         # Dynamic filters for the current table
-                         uiOutput(paste0("filters_", tbl))
-                       ),
-                       mainPanel(
-                         # Display the filtered table
-                         reactableOutput(paste0(tbl, "_table")),
-                         # Dynamic plot column selector
-                         uiOutput(paste0("plot_selector_", tbl)),
-                         # Display the corresponding plot
-                         plotlyOutput(paste0(tbl, "_plot"))
+  titlePanel("Dynamic DuckDB Explorer"),
+  tabsetPanel(
+    # First top-level tab: Aggregated Data (filtered by intersection)
+    tabPanel("Aggregated Data",
+             reactableOutput("aggregated_table")
+    ),
+    # Second top-level tab: Individual Tables (with filters and plots)
+    tabPanel("Individual Tables",
+             # Nested tabset panel for each individual table.
+             do.call(tabsetPanel,
+                     lapply(individual_tables, function(tbl) {
+                       tabPanel(tbl,
+                                sidebarLayout(
+                                  sidebarPanel(
+                                    uiOutput(paste0("filters_", tbl))
+                                  ),
+                                  mainPanel(
+                                    reactableOutput(paste0(tbl, "_table")),
+                                    br(),
+                                    uiOutput(paste0("plot_selector_", tbl)),
+                                    plotlyOutput(paste0(tbl, "_plot"))
+                                  )
+                                )
                        )
-                     )
-            )
-          })
+                     })
+             )
+    )
   )
 )
 
-# Server Logic
 server <- function(input, output, session) {
 
-  # Helper function to get distinct values for a given table/column.
+  # Helper: Get distinct non-NA values for a given table/column.
   get_choices <- function(tbl, col) {
-    # Returns unique values from the specified column.
-    dbGetQuery(con, paste("SELECT DISTINCT", col, "FROM", tbl))[[col]]
+    query <- sprintf("SELECT DISTINCT %s FROM %s", col, tbl)
+    vals <- dbGetQuery(con, query)[[col]]
+    unique(vals[!is.na(vals)])
   }
 
-  # For each table, dynamically generate UI for filters and plot selector.
-  lapply(tables, function(tbl) {
-
-    # Generate dynamic filters based on the table's columns.
+  # Generate dynamic filter UI for each individual table.
+  lapply(individual_tables, function(tbl) {
     output[[paste0("filters_", tbl)]] <- renderUI({
       cols <- dbListFields(con, tbl)
-      do.call(tagList, lapply(cols, function(col) {
-        vals <- get_choices(tbl, col)
+      ui_list <- lapply(cols, function(col) {
         input_id <- paste(tbl, col, sep = "_")
-        if (is.numeric(vals)) {
+        # Sample value to determine type.
+        sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+        if (is.numeric(sample_val)) {
+          # Numeric: sliderInput.
+          vals <- dbGetQuery(con, sprintf("SELECT %s FROM %s WHERE %s IS NOT NULL", col, tbl, col))[[col]]
           sliderInput(input_id, label = col,
                       min = min(vals, na.rm = TRUE),
                       max = max(vals, na.rm = TRUE),
                       value = range(vals, na.rm = TRUE))
         } else {
+          # Non-numeric: multi-select input.
+          vals <- get_choices(tbl, col)
           selectInput(input_id, label = col,
                       choices = c("All", vals),
-                      selected = "All",
-                      multiple = TRUE)
+                      selected = "All", multiple = TRUE)
         }
-      }))
+      })
+      do.call(tagList, ui_list)
     })
+  })
 
-    # Generate a dynamic plot column selector for the current table.
+  # Generate dynamic plot column selector for each individual table.
+  lapply(individual_tables, function(tbl) {
     output[[paste0("plot_selector_", tbl)]] <- renderUI({
       cols <- dbListFields(con, tbl)
       selectInput(inputId = paste0(tbl, "_plotcol"),
-                  label = "Select Plot Column",
+                  label = "Select Column for Plot:",
                   choices = cols,
                   selected = cols[1])
     })
+  })
 
-    # Function to build and run a dynamic SQL query for filtering.
-    filtered_data <- function(tbl) {
+  # Function: Build reactive filtered data for a given table.
+  filtered_data <- function(tbl) {
+    reactive({
       cols <- dbListFields(con, tbl)
       conditions <- c()
       params <- list()
+
       for (col in cols) {
-        input_val <- input[[paste(tbl, col, sep = "_")]]
-        if (!is.null(input_val) && !"All" %in% input_val) {
-          if (is.numeric(input_val)) {
+        input_id <- paste(tbl, col, sep = "_")
+        sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+        if (is.numeric(sample_val)) {
+          slider_val <- input[[input_id]]
+          if (!is.null(slider_val)) {
             conditions <- c(conditions, sprintf("%s BETWEEN ? AND ?", col))
-            params <- c(params, input_val[1], input_val[2])
-          } else {
+            params <- c(params, slider_val[1], slider_val[2])
+          }
+        } else {
+          input_val <- input[[input_id]]
+          if (!is.null(input_val) && length(input_val) > 0 && !("All" %in% input_val)) {
             placeholders <- paste(rep("?", length(input_val)), collapse = ", ")
             conditions <- c(conditions, sprintf("%s IN (%s)", col, placeholders))
             params <- c(params, input_val)
           }
         }
       }
+
       sql <- paste("SELECT * FROM", tbl)
       if (length(conditions) > 0) {
         sql <- paste(sql, "WHERE", paste(conditions, collapse = " AND "))
       }
       dbGetQuery(con, sql, params = params)
-    }
+    }) |> debounce(500)
+  }
 
-    # Render the filtered table using reactable.
+  # Render individual tables and plots.
+  lapply(individual_tables, function(tbl) {
     output[[paste0(tbl, "_table")]] <- renderReactable({
-      # Run the dynamically constructed query.
-      df <- filtered_data(tbl)
+      df <- filtered_data(tbl)()
       reactable(df, searchable = TRUE, pagination = TRUE)
     })
-
-    # Render a plot based on the selected plot column.
     output[[paste0(tbl, "_plot")]] <- renderPlotly({
-      # Get the filtered data.
-      df <- filtered_data(tbl)
+      df <- filtered_data(tbl)()
       plotcol <- input[[paste0(tbl, "_plotcol")]]
       if (is.null(plotcol) || nrow(df) == 0) return(NULL)
       if (is.numeric(df[[plotcol]])) {
-        # For numeric columns: box plot.
         plot_ly(df, y = ~df[[plotcol]], type = "box") %>%
-          layout(title = paste("Box Plot of", plotcol))
+          layout(title = paste("Box Plot of", plotcol),
+                 yaxis = list(title = plotcol))
       } else {
-        # For non-numeric columns: bar chart of value counts.
-        counts <- as.data.frame(table(df[[plotcol]]))
+        counts <- as.data.frame(table(df[[plotcol]], useNA = "ifany"))
         names(counts) <- c("value", "count")
+        counts$value[is.na(counts$value)] <- "NA"
         plot_ly(counts, x = ~value, y = ~count, type = "bar") %>%
           layout(title = paste("Bar Chart of", plotcol),
                  xaxis = list(title = plotcol),
                  yaxis = list(title = "Count"))
       }
     })
-
   })
+
+  # Reactive: Compute intersection of GeneIDs from all individual tables.
+  intersected_gene_ids <- reactive({
+    filtered_ids <- lapply(individual_tables, function(tbl) {
+      df <- filtered_data(tbl)()
+      unique(df$GeneID)
+    })
+    if (length(filtered_ids) == 0) return(character(0))
+    Reduce(intersect, filtered_ids)
+  })
+
+  # Render the Aggregated Data tab.
+  output$aggregated_table <- renderReactable({
+    gene_ids <- intersected_gene_ids()
+    if (length(gene_ids) == 0) {
+      return(reactable(data.frame(Message = "No matching gene IDs")))
+    }
+    placeholders <- paste(rep("?", length(gene_ids)), collapse = ", ")
+    sql <- paste("SELECT * FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = "")
+    df <- dbGetQuery(con, sql, params = gene_ids)
+    reactable(df, searchable = TRUE, pagination = TRUE)
+  })
+
 }
 
 shinyApp(ui, server)
