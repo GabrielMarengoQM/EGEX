@@ -5,6 +5,8 @@ library(DBI)
 library(reactable)
 library(plotly)
 library(dplyr)
+library(arrow)
+library(zip)
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
@@ -14,25 +16,31 @@ saved_gene_lists <- reactiveValues(data = list())
 
 ui <- page_navbar(
   title = "EGEx",
-  padding = "0.5rem",
+  padding = "0.4rem",
   theme = bs_theme(bootswatch = "cosmo"),
   nav_panel("Explore Data",
             sidebarLayout(
               sidebarPanel(
-                accordion(
-                  accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui")),
-                  accordion_panel("Current Filters", uiOutput("current_filters")),
-                  accordion_panel("Filter Controls",
-                                  tagList(
-                                    actionButton("clear_filters", "Clear Current Filters"),
-                                    br(), br(),
-                                    lapply(individual_tables, function(tbl) {
+                div(class = "overflow-auto", style = "max-height: 80vh;",
+                    accordion(
+                      accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui"), value = "saved"),
+                      accordion_panel("Current Filters", uiOutput("current_filters"), value = "current"),
+                      accordion_panel("Filter Controls",
                                       tagList(
-                                        h4(tbl),
-                                        uiOutput(paste0("filters_", tbl))
-                                      )
-                                    })
-                                  ))
+                                        actionButton("clear_filters", "Clear Current Filters"),
+                                        br(), br(),
+                                        lapply(individual_tables, function(tbl) {
+                                          tagList(
+                                            h4(tbl),
+                                            uiOutput(paste0("filters_", tbl))
+                                          )
+                                        })
+                                      ),
+                                      value = "controls"
+                      ),
+                      open = "controls",
+                      multiple = TRUE
+                    )
                 )
               ),
               mainPanel(
@@ -107,6 +115,22 @@ ui <- page_navbar(
                 )
               )
             )
+  ),
+  nav_panel("Downloads",
+            fluidRow(
+              column(6,
+                     selectInput("db_file_type", "Select DB file type:",
+                                 choices = c("csv", "tsv", "parquet"), selected = "csv"),
+                     downloadButton("download_db", "Download DB")
+              )
+            ),
+            fluidRow(
+              column(6,
+                     selectInput("gene_list_file_type", "Select file type for saved gene lists:",
+                                 choices = c("CSV", "TSV"), selected = "CSV"),
+                     downloadButton("download_gene_lists", "Download Saved Gene Lists")
+              )
+            )
   )
 )
 
@@ -133,7 +157,7 @@ server <- function(input, output, session) {
     }
   })
 
-  # Observer for Apply Filters buttons (unchanged)
+  # Observer for Apply Filters buttons
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -155,7 +179,7 @@ server <- function(input, output, session) {
     }
   })
 
-  # Observer for Remove buttons: when clicked, remove the gene list.
+  # Observer for Remove buttons: remove the gene list.
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -374,7 +398,6 @@ server <- function(input, output, session) {
       p <- plot_ly(data = combined, x = ~value, color = ~gene_list, type = "histogram",
                    histnorm = ifelse(input$bar_y_type=="Percentage", "percent", ""))
     } else {
-      print(head(combined))
       counts <- combined %>%
         group_by(gene_list, value = .data[[input$bar_col]]) %>%
         summarise(count = n_distinct(GeneID), .groups = "drop")
@@ -594,7 +617,8 @@ server <- function(input, output, session) {
       footer = tagList(
         modalButton("Cancel"),
         actionButton("confirm_save", "Save")
-      )
+      ),
+      easyClose = TRUE
     ))
   })
 
@@ -637,6 +661,100 @@ server <- function(input, output, session) {
       }
     }
   })
+
+  ### DOWNLOAD HANDLERS ###
+
+  # Download DB: export each table in chosen file type and create a log file with date/time.
+  output$download_db <- downloadHandler(
+    filename = function() {
+      paste0("EGEx_DB_", Sys.Date(), ".zip")
+    },
+    content = function(file) {
+      # Create a temporary directory to store exported files
+      tmpDir <- tempdir()
+      exported_files <- c()
+      file_type <- input$db_file_type
+
+      # Loop over all tables and write them out in the selected format.
+      for(tbl in all_tables) {
+        df <- dbReadTable(con, tbl)
+        # Create filename based on table name and file type.
+        out_file <- file.path(tmpDir, paste0(tbl, ".", file_type))
+        if(file_type == "csv") {
+          write.csv(df, out_file, row.names = FALSE)
+        } else if(file_type == "tsv") {
+          write.table(df, out_file, sep = "\t", row.names = FALSE, quote = FALSE)
+        } else if(file_type == "parquet") {
+          write_parquet(df, out_file)
+        }
+        exported_files <- c(exported_files, out_file)
+      }
+
+      # Create a log file with date and time of download.
+      log_file <- file.path(tmpDir, "download_log.txt")
+      writeLines(paste("Download time:", Sys.time()), log_file)
+      exported_files <- c(exported_files, log_file)
+
+      # Zip the files together.
+      zip::zipr(zipfile = file, files = exported_files, recurse = FALSE)
+    }
+  )
+
+  # Download saved gene lists: export saved gene lists and a log file with filters.
+  output$download_gene_lists <- downloadHandler(
+    filename = function() {
+      paste0("EGEx_Saved_Gene_Lists_", Sys.Date(), ".zip")
+    },
+    content = function(file) {
+      tmpDir <- tempdir()
+      exported_files <- c()
+
+      file_type <- input$gene_list_file_type  # either "CSV" or "TSV"
+      sep_char <- ifelse(file_type == "CSV", ",", "\t")
+      ext <- ifelse(file_type == "CSV", "csv", "tsv")
+
+      # Prepare a data frame summarizing the saved gene lists.
+      # For each saved list, we combine its gene IDs into one string.
+      if(length(saved_gene_lists$data) > 0) {
+        gl_df <- data.frame(
+          GeneList = names(saved_gene_lists$data),
+          Genes = sapply(names(saved_gene_lists$data), function(n) {
+            paste(saved_gene_lists$data[[n]]$genes, collapse = sep_char)
+          }),
+          stringsAsFactors = FALSE
+        )
+      } else {
+        gl_df <- data.frame(GeneList = character(0), Genes = character(0))
+      }
+
+      gene_list_file <- file.path(tmpDir, paste0("saved_gene_lists.", ext))
+      if(file_type == "CSV") {
+        write.csv(gl_df, gene_list_file, row.names = FALSE)
+      } else {
+        write.table(gl_df, gene_list_file, sep = "\t", row.names = FALSE, quote = FALSE)
+      }
+      exported_files <- c(exported_files, gene_list_file)
+
+      # Create a log file with filters for each saved gene list.
+      log_lines <- c()
+      for(name in names(saved_gene_lists$data)) {
+        log_lines <- c(log_lines, paste0("Gene List: ", name))
+        filters <- saved_gene_lists$data[[name]]$filters
+        for(k in names(filters)) {
+          log_lines <- c(log_lines, paste0("  ", k, ": ", paste(filters[[k]], collapse = ", ")))
+        }
+        log_lines <- c(log_lines, "")
+      }
+      log_file <- file.path(tmpDir, "gene_lists_log.txt")
+      writeLines(log_lines, log_file)
+      exported_files <- c(exported_files, log_file)
+
+      # Zip the files together.
+      zip::zipr(zipfile = file, files = exported_files, recurse = FALSE)
+    }
+  )
+
+  # Add the download buttons to the UI if needed (they are in the nav_panel Downloads)
 
 }
 
