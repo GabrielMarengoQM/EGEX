@@ -13,7 +13,7 @@ all_tables <- dbListTables(con)
 individual_tables <- setdiff(all_tables, "aggregated")
 
 # Reactive value to store saved gene lists.
-# Each saved list is a list with two elements: "genes" and "filters".
+# Each saved gene list is a list with two elements: "genes" and "filters".
 saved_gene_lists <- reactiveValues(data = list())
 
 ui <- fluidPage(
@@ -37,7 +37,6 @@ ui <- fluidPage(
     mainPanel(
       tabsetPanel(
         tabPanel("Table",
-                 # "Save Gene List" button
                  actionButton("save_gene_list", "Save Gene List"),
                  br(), br(),
                  reactableOutput("aggregated_table")
@@ -53,6 +52,9 @@ ui <- fluidPage(
                             radioButtons("bar_y_type", "Y-axis type:",
                                          choices = c("Count", "Percentage"),
                                          selected = "Count", inline = TRUE),
+                            # Multi-select for gene lists:
+                            selectInput("bar_gene_lists", "Select Gene Lists:",
+                                        choices = NULL, selected = NULL, multiple = TRUE),
                             plotlyOutput("plot_bar")
                    ),
                    tabPanel("Violin Plot",
@@ -62,6 +64,9 @@ ui <- fluidPage(
                             selectInput("violin_col", "Select numeric column:",
                                         choices = NULL, selected = ""),
                             checkboxInput("violin_show_points", "Show all points", value = FALSE),
+                            # Multi-select for gene lists:
+                            selectInput("violin_gene_lists", "Select Gene Lists:",
+                                        choices = NULL, selected = NULL, multiple = TRUE),
                             plotlyOutput("plot_violin")
                    ),
                    tabPanel("Scatter Plot",
@@ -86,9 +91,7 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
 
-  ### SAVED GENE LISTS UI and APPLY OBSERVERS ###
-
-  # Render Saved Gene Lists as a UI table with an "Apply Filters" button for each.
+  ### SAVED GENE LISTS UI ###
   output$saved_gene_lists_ui <- renderUI({
     if(length(saved_gene_lists$data) == 0) {
       HTML("<em>No saved gene lists.</em>")
@@ -96,7 +99,6 @@ server <- function(input, output, session) {
       tagList(
         lapply(names(saved_gene_lists$data), function(name) {
           count <- length(saved_gene_lists$data[[name]]$genes)
-          # Create a unique button id safe for use (replace spaces with underscores)
           btnId <- paste0("apply_", gsub(" ", "_", name))
           fluidRow(
             column(4, strong(name)),
@@ -114,14 +116,11 @@ server <- function(input, output, session) {
     for(name in names(saved_gene_lists$data)) {
       local({
         listName <- name
-        btnId <- paste0("apply_", gsub(" ", "_", listName))
+        btnId <- paste0("apply_", gsub(" ", "_", name))
         observeEvent(input[[btnId]], {
-          # Retrieve the saved filters for this list.
           saved_filters <- saved_gene_lists$data[[listName]]$filters
-          # Loop over each saved filter and update the corresponding input.
           for(key in names(saved_filters)) {
             val <- saved_filters[[key]]
-            # If the saved value is numeric, assume sliderInput.
             if(is.numeric(val)) {
               updateSliderInput(session, key, value = val)
             } else {
@@ -133,10 +132,9 @@ server <- function(input, output, session) {
     }
   })
 
-  ### CURRENT FILTERS PANEL ###
+  ### CURRENT FILTERS UI ###
   output$current_filters <- renderUI({
     all_inputs <- reactiveValuesToList(input)
-    # Filter keys that begin with any of the table names.
     filter_keys <- names(all_inputs)[sapply(names(all_inputs), function(x) {
       any(sapply(individual_tables, function(tbl) {
         startsWith(x, paste0(tbl, "_"))
@@ -165,16 +163,14 @@ server <- function(input, output, session) {
     HTML(html_out)
   })
 
-  ### HELPER FUNCTIONS AND DYNAMIC FILTER UI ###
+  ### HELPER FUNCTIONS & DYNAMIC FILTER UI ###
 
-  # Helper: Get distinct non-NA values for a given table/column.
   get_choices <- function(tbl, col) {
     query <- sprintf("SELECT DISTINCT %s FROM %s", col, tbl)
     vals <- dbGetQuery(con, query)[[col]]
     unique(vals[!is.na(vals)])
   }
 
-  # Generate dynamic filter UI for each table.
   lapply(individual_tables, function(tbl) {
     output[[paste0("filters_", tbl)]] <- renderUI({
       cols <- dbListFields(con, tbl)
@@ -198,7 +194,6 @@ server <- function(input, output, session) {
     })
   })
 
-  # Build reactive filtered data for a given table.
   filtered_data <- function(tbl) {
     reactive({
       cols <- dbListFields(con, tbl)
@@ -231,7 +226,6 @@ server <- function(input, output, session) {
     }) |> debounce(5)
   }
 
-  # Compute intersection of GeneIDs from all individual tables.
   intersected_gene_ids <- reactive({
     filtered_ids <- lapply(individual_tables, function(tbl) {
       df <- filtered_data(tbl)()
@@ -240,8 +234,6 @@ server <- function(input, output, session) {
     if (length(filtered_ids) == 0) return(character(0))
     Reduce(intersect, filtered_ids)
   })
-
-  ### AGGREGATED TABLE OUTPUT ###
 
   output$aggregated_table <- renderReactable({
     gene_ids <- intersected_gene_ids()
@@ -253,8 +245,6 @@ server <- function(input, output, session) {
     df <- dbGetQuery(con, sql, params = gene_ids)
     reactable(df, searchable = TRUE, filterable = TRUE, pagination = TRUE)
   })
-
-  ### UPDATE COLUMN SELECTORS FOR PLOTS ###
 
   observeEvent(input$bar_table, {
     cols <- dbListFields(con, input$bar_table)
@@ -276,7 +266,12 @@ server <- function(input, output, session) {
     updateSelectInput(session, "scatter_y", choices = c("", cols_y), selected = "")
   })
 
-  ### HELPER FUNCTION: NO DATA PLOT ###
+  # Update gene list selectors for bar and violin plots.
+  observe({
+    choices <- c("Current List", names(saved_gene_lists$data))
+    updateSelectInput(session, "bar_gene_lists", choices = choices, selected = choices)
+    updateSelectInput(session, "violin_gene_lists", choices = choices, selected = choices)
+  })
 
   noDataPlot <- function() {
     plot_ly() %>%
@@ -290,10 +285,11 @@ server <- function(input, output, session) {
   }
 
   ### BAR CHART OUTPUT ###
-
   output$plot_bar <- renderPlotly({
     if (is.null(input$bar_table) || input$bar_table == "" ||
-        is.null(input$bar_col) || input$bar_col == "") return(noDataPlot())
+        is.null(input$bar_col) || input$bar_col == "" ||
+        is.null(input$bar_gene_lists) || length(input$bar_gene_lists) == 0)
+      return(noDataPlot())
 
     df <- filtered_data(input$bar_table)()
     if (nrow(df) == 0) return(noDataPlot())
@@ -303,45 +299,53 @@ server <- function(input, output, session) {
     df <- df[df$GeneID %in% gene_ids, ]
     if(nrow(df) == 0) return(noDataPlot())
 
-    var <- df[[input$bar_col]]
-    if (is.numeric(var)) {
-      if (input$bar_y_type == "Percentage") {
-        p <- plot_ly(data = df, x = ~var, type = "histogram", histnorm = "percent") %>%
-          layout(title = paste("Histogram of", input$bar_col),
-                 xaxis = list(title = input$bar_col),
-                 yaxis = list(title = "Percentage"))
+    # Row bind subsets for each selected gene list.
+    combined <- do.call(rbind, lapply(input$bar_gene_lists, function(listName) {
+      if(listName == "Current List") {
+        subset_genes <- intersected_gene_ids()
       } else {
-        p <- plot_ly(data = df, x = ~var, type = "histogram") %>%
-          layout(title = paste("Histogram of", input$bar_col),
-                 xaxis = list(title = input$bar_col),
-                 yaxis = list(title = "Count"))
+        subset_genes <- saved_gene_lists$data[[listName]]$genes
       }
+      df_subset <- df[df$GeneID %in% subset_genes, , drop = FALSE]
+      if(nrow(df_subset)==0) return(NULL)
+      df_subset$gene_list <- listName
+      df_subset
+    }))
+    if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+
+    # For convenience, create a new column "value" holding the selected column's values.
+    combined$value <- combined[[input$bar_col]]
+
+    if(is.numeric(combined$value)) {
+      p <- plot_ly(data = combined, x = ~value, color = ~gene_list, type = "histogram",
+                   histnorm = ifelse(input$bar_y_type=="Percentage", "percent", ""))
     } else {
-      counts <- as.data.frame(table(var, useNA = "ifany"))
-      names(counts) <- c("value", "count")
-      if (input$bar_y_type == "Percentage") {
-        counts$percentage <- counts$count / sum(counts$count) * 100
-        p <- plot_ly(data = counts, x = ~value, y = ~percentage, type = "bar") %>%
-          layout(title = paste("Bar Chart of", input$bar_col),
-                 xaxis = list(title = input$bar_col),
-                 yaxis = list(title = "Percentage"))
+      # For non-numeric columns, compute counts per group.
+      counts <- combined %>%
+        group_by(gene_list, value = .data[[input$bar_col]]) %>%
+        summarise(count = n(), .groups = "drop")
+      if(input$bar_y_type=="Percentage") {
+        counts <- counts %>% group_by(gene_list) %>%
+          mutate(percentage = count/sum(count)*100) %>% ungroup()
+        p <- plot_ly(data = counts, x = ~value, y = ~percentage, color = ~gene_list, type = "bar")
       } else {
-        p <- plot_ly(data = counts, x = ~value, y = ~count, type = "bar") %>%
-          layout(title = paste("Bar Chart of", input$bar_col),
-                 xaxis = list(title = input$bar_col),
-                 yaxis = list(title = "Count"))
+        p <- plot_ly(data = counts, x = ~value, y = ~count, color = ~gene_list, type = "bar")
       }
     }
+
+    p <- layout(p, barmode = "group",
+                title = paste("Bar Chart of", input$bar_col),
+                xaxis = list(title = input$bar_col),
+                yaxis = list(title = ifelse(input$bar_y_type=="Percentage", "Percentage", "Count")))
     p
   })
 
   ### VIOLIN PLOT OUTPUT ###
-
   output$plot_violin <- renderPlotly({
     if (is.null(input$violin_table) || input$violin_table == "" ||
-        is.null(input$violin_col) || input$violin_col == "") {
+        is.null(input$violin_col) || input$violin_col == "" ||
+        is.null(input$violin_gene_lists) || length(input$violin_gene_lists) == 0)
       return(noDataPlot())
-    }
 
     df <- filtered_data(input$violin_table)()
     if (nrow(df) == 0) return(noDataPlot())
@@ -351,8 +355,21 @@ server <- function(input, output, session) {
     df <- df[df$GeneID %in% gene_ids, ]
     if(nrow(df)==0) return(noDataPlot())
 
-    var <- df[[input$violin_col]]
-    if (!is.numeric(var)) {
+    combined <- do.call(rbind, lapply(input$violin_gene_lists, function(listName) {
+      if(listName=="Current List") {
+        subset_genes <- intersected_gene_ids()
+      } else {
+        subset_genes <- saved_gene_lists$data[[listName]]$genes
+      }
+      df_subset <- df[df$GeneID %in% subset_genes, , drop = FALSE]
+      if(nrow(df_subset)==0) return(NULL)
+      df_subset$gene_list <- listName
+      df_subset
+    }))
+    if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+
+    combined$value <- combined[[input$violin_col]]
+    if(!is.numeric(combined$value)) {
       return(plot_ly() %>% layout(title = "Error",
                                   annotations = list(
                                     list(text = "Can't use factor for numeric plot",
@@ -362,32 +379,29 @@ server <- function(input, output, session) {
                                   )))
     }
 
-    # Create hover text that displays GeneID and the selected column's value.
-    df$hover_text <- paste("Gene: ", df$GeneID, "<br>",
-                           input$violin_col, ": ", df[[input$violin_col]])
+    # Create hover text for each row.
+    combined$hover_text <- paste("Gene: ", combined$GeneID, "<br>",
+                                 input$violin_col, ": ", combined$value)
 
-    p <- plot_ly(data = df,
-                 y = as.formula(paste0("~", input$violin_col)),
-                 type = "violin",
+    p <- plot_ly(data = combined, y = ~value, color = ~gene_list, type = "violin",
                  box = list(visible = TRUE),
                  meanline = list(visible = TRUE),
                  points = ifelse(input$violin_show_points, "all", "outliers"),
                  text = ~hover_text,
-                 hoverinfo = "text") %>%
-      layout(title = paste("Violin Plot of", input$violin_col),
-             yaxis = list(title = input$violin_col))
+                 hoverinfo = "text")
+
+    p <- layout(p, title = paste("Violin Plot of", input$violin_col),
+                yaxis = list(title = input$violin_col))
     p
   })
 
-  ### SCATTER PLOT OUTPUT ###
-
+  ### SCATTER PLOT OUTPUT (unchanged) ###
   output$plot_scatter <- renderPlotly({
     if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
         is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
         is.null(input$scatter_x) || input$scatter_x == "" ||
-        is.null(input$scatter_y) || input$scatter_y == "") {
+        is.null(input$scatter_y) || input$scatter_y == "")
       return(noDataPlot())
-    }
 
     gene_ids <- intersected_gene_ids()
     if(length(gene_ids)==0) return(noDataPlot())
@@ -396,9 +410,8 @@ server <- function(input, output, session) {
       df_joint <- filtered_data(input$scatter_table_x)()
       df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
       if(nrow(df_joint)==0) return(noDataPlot())
-      if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint))){
+      if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
         return(noDataPlot())
-      }
       xvar <- df_joint[[input$scatter_x]]
       yvar <- df_joint[[input$scatter_y]]
       geneid <- df_joint$GeneID
@@ -409,9 +422,8 @@ server <- function(input, output, session) {
       df_y <- df_y[df_y$GeneID %in% gene_ids, ]
       df_joint <- inner_join(df_x, df_y, by = "GeneID")
       if(nrow(df_joint)==0) return(noDataPlot())
-      if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint))){
+      if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
         return(noDataPlot())
-      }
       xvar <- df_joint[[input$scatter_x]]
       yvar <- df_joint[[input$scatter_y]]
       geneid <- df_joint$GeneID
@@ -434,8 +446,6 @@ server <- function(input, output, session) {
   })
 
   ### SAVE GENE LIST FUNCTIONALITY ###
-
-  # Show a modal dialog when "Save Gene List" is clicked.
   observeEvent(input$save_gene_list, {
     showModal(modalDialog(
       title = "Save Gene List",
@@ -447,11 +457,9 @@ server <- function(input, output, session) {
     ))
   })
 
-  # When "confirm_save" is clicked, save the current gene list and filters.
   observeEvent(input$confirm_save, {
     req(input$gene_list_name)
     current_genes <- intersected_gene_ids()
-    # Save only filter inputs that correspond to the tables.
     current_filters <- reactiveValuesToList(input)
     filter_keys <- names(current_filters)[sapply(names(current_filters), function(x) {
       any(sapply(individual_tables, function(tbl) {
