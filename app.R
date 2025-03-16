@@ -8,115 +8,105 @@ library(dplyr)
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
-# Get all table names; exclude "aggregated" which is used for the aggregated data.
 all_tables <- dbListTables(con)
 individual_tables <- setdiff(all_tables, "aggregated")
-
-# Reactive value to store saved gene lists.
-# Each saved gene list is a list with two elements: "genes" and "filters".
 saved_gene_lists <- reactiveValues(data = list())
 
-ui <- fluidPage(
-  theme = bs_theme(bootswatch = "flatly"),
-  titlePanel("Dynamic DuckDB Explorer"),
-  sidebarLayout(
-    sidebarPanel(
-      # Accordion with three panels:
-      accordion(
-        accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui")),
-        accordion_panel("Current Filters", uiOutput("current_filters")),
-        accordion_panel("Filter Controls",
-                        tagList(
-                          actionButton("clear_filters", "Clear Current Filters"),
-                          br(), br(),
-                          lapply(individual_tables, function(tbl) {
-                            tagList(
-                              h4(tbl),
-                              uiOutput(paste0("filters_", tbl))
-                            )
-                          })
-                        ))
-      )
-    ),
-    mainPanel(
-      tabsetPanel(
-        tabPanel("Table",
-                 actionButton("save_gene_list", "Save Gene List"),
-                 br(), br(),
-                 reactableOutput("aggregated_table")
-        ),
-        tabPanel("Plot",
-                 tabsetPanel(
-                   tabPanel("Bar Chart",
-                            selectInput("bar_table", "Select table for Bar Chart:",
-                                        choices = individual_tables,
-                                        selected = individual_tables[1]),
-                            selectInput("bar_col", "Select column:",
-                                        choices = NULL, selected = ""),
-                            radioButtons("bar_y_type", "Y-axis type:",
-                                         choices = c("Count", "Percentage"),
-                                         selected = "Count", inline = TRUE),
-                            # Multi-select for gene lists:
-                            selectInput("bar_gene_lists", "Select Gene Lists:",
-                                        choices = NULL, selected = NULL, multiple = TRUE),
-                            plotlyOutput("plot_bar")
-                   ),
-                   tabPanel("Violin Plot",
-                            selectInput("violin_table", "Select table for Violin Plot:",
-                                        choices = individual_tables,
-                                        selected = individual_tables[1]),
-                            selectInput("violin_col", "Select numeric column:",
-                                        choices = NULL, selected = ""),
-                            checkboxInput("violin_show_points", "Show all points", value = FALSE),
-                            # Multi-select for gene lists:
-                            selectInput("violin_gene_lists", "Select Gene Lists:",
-                                        choices = NULL, selected = NULL, multiple = TRUE),
-                            plotlyOutput("plot_violin")
-                   ),
-                   tabPanel("Scatter Plot",
-                            selectInput("scatter_table_x", "Select table for X:",
-                                        choices = individual_tables,
-                                        selected = individual_tables[1]),
-                            selectInput("scatter_x", "Select X column:",
-                                        choices = NULL, selected = ""),
-                            selectInput("scatter_table_y", "Select table for Y:",
-                                        choices = individual_tables,
-                                        selected = individual_tables[1]),
-                            selectInput("scatter_y", "Select Y column:",
-                                        choices = NULL, selected = ""),
-                            # Multi-select for gene lists:
-                            selectInput("scatter_gene_lists", "Select Gene Lists:",
-                                        choices = NULL, selected = "Current List", multiple = TRUE),
-                            plotlyOutput("plot_scatter")
-                   ),
-                   tabPanel("Stacked Bar Chart",
-                            # Two table selectors: one for X and one for Y.
-                            selectInput("stack_table_x", "Select table for X:",
-                                        choices = individual_tables,
-                                        selected = individual_tables[1]),
-                            selectInput("stack_x", "Select X column:",
-                                        choices = NULL, selected = ""),
-                            selectInput("stack_table_y", "Select table for Y:",
-                                        choices = individual_tables,
-                                        selected = individual_tables[1]),
-                            # For Y, only categorical (non-numeric) columns.
-                            selectInput("stack_y", "Select Y column (factor):",
-                                        choices = NULL, selected = ""),
-                            numericInput("bin_size", "Bin Size (for numeric X):",
-                                         value = 0, min = 0.1, step = 0.1),
-                            # Radio button to choose between Count and Percentage.
-                            radioButtons("stack_y_type", "Y-axis display:",
-                                         choices = c("Count", "Percentage"),
-                                         selected = "Percentage", inline = TRUE),
-                            # Single gene list selection for stacked chart.
-                            selectInput("stack_gene_list", "Select Gene List:",
-                                        choices = NULL, selected = "Current List"),
-                            plotlyOutput("plot_stack")
-                   )
-                 )
-        )
-      )
-    )
+ui <- page_navbar(
+  title = "EGEx",
+  padding = "0.5rem",
+  theme = bs_theme(bootswatch = "cosmo"),
+  nav_panel("Explore Data",
+            sidebarLayout(
+              sidebarPanel(
+                accordion(
+                  accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui")),
+                  accordion_panel("Current Filters", uiOutput("current_filters")),
+                  accordion_panel("Filter Controls",
+                                  tagList(
+                                    actionButton("clear_filters", "Clear Current Filters"),
+                                    br(), br(),
+                                    lapply(individual_tables, function(tbl) {
+                                      tagList(
+                                        h4(tbl),
+                                        uiOutput(paste0("filters_", tbl))
+                                      )
+                                    })
+                                  ))
+                )
+              ),
+              mainPanel(
+                tabsetPanel(
+                  tabPanel("Table",
+                           actionButton("save_gene_list", "Save Gene List", width = "25%"),
+                           reactableOutput("aggregated_table")
+                  ),
+                  tabPanel("Plot",
+                           tabsetPanel(
+                             tabPanel("Bar Chart",
+                                      selectInput("bar_table", "Select table for Bar Chart:",
+                                                  choices = individual_tables,
+                                                  selected = individual_tables[1]),
+                                      selectInput("bar_col", "Select column:",
+                                                  choices = NULL, selected = ""),
+                                      radioButtons("bar_y_type", "Y-axis type:",
+                                                   choices = c("Count", "Percentage"),
+                                                   selected = "Count", inline = TRUE),
+                                      selectInput("bar_gene_lists", "Select Gene Lists:",
+                                                  choices = NULL, selected = NULL, multiple = TRUE),
+                                      plotlyOutput("plot_bar")
+                             ),
+                             tabPanel("Violin Plot",
+                                      selectInput("violin_table", "Select table for Violin Plot:",
+                                                  choices = individual_tables,
+                                                  selected = individual_tables[1]),
+                                      selectInput("violin_col", "Select numeric column:",
+                                                  choices = NULL, selected = ""),
+                                      checkboxInput("violin_show_points", "Show all points", value = FALSE),
+                                      selectInput("violin_gene_lists", "Select Gene Lists:",
+                                                  choices = NULL, selected = NULL, multiple = TRUE),
+                                      plotlyOutput("plot_violin")
+                             ),
+                             tabPanel("Scatter Plot",
+                                      selectInput("scatter_table_x", "Select table for X:",
+                                                  choices = individual_tables,
+                                                  selected = individual_tables[1]),
+                                      selectInput("scatter_x", "Select X column:",
+                                                  choices = NULL, selected = ""),
+                                      selectInput("scatter_table_y", "Select table for Y:",
+                                                  choices = individual_tables,
+                                                  selected = individual_tables[1]),
+                                      selectInput("scatter_y", "Select Y column:",
+                                                  choices = NULL, selected = ""),
+                                      selectInput("scatter_gene_lists", "Select Gene Lists:",
+                                                  choices = NULL, selected = "Current List", multiple = TRUE),
+                                      plotlyOutput("plot_scatter")
+                             ),
+                             tabPanel("Stacked Bar Chart",
+                                      selectInput("stack_table_x", "Select table for X:",
+                                                  choices = individual_tables,
+                                                  selected = individual_tables[1]),
+                                      selectInput("stack_x", "Select X column:",
+                                                  choices = NULL, selected = ""),
+                                      selectInput("stack_table_y", "Select table for Y:",
+                                                  choices = individual_tables,
+                                                  selected = individual_tables[1]),
+                                      selectInput("stack_y", "Select Y column (factor):",
+                                                  choices = NULL, selected = ""),
+                                      numericInput("bin_size", "Bin Size (for numeric X):",
+                                                   value = 10, min = 0.1, step = 0.1),
+                                      radioButtons("stack_y_type", "Y-axis display:",
+                                                   choices = c("Count", "Percentage"),
+                                                   selected = "Percentage", inline = TRUE),
+                                      selectInput("stack_gene_list", "Select Gene List:",
+                                                  choices = NULL, selected = "Current List"),
+                                      plotlyOutput("plot_stack")
+                             )
+                           )
+                  )
+                )
+              )
+            )
   )
 )
 
@@ -130,24 +120,27 @@ server <- function(input, output, session) {
       tagList(
         lapply(names(saved_gene_lists$data), function(name) {
           count <- length(saved_gene_lists$data[[name]]$genes)
-          btnId <- paste0("apply_", gsub(" ", "_", name))
+          applyId <- paste0("apply_", gsub(" ", "_", name))
+          removeId <- paste0("remove_", gsub(" ", "_", name))
           fluidRow(
             column(4, strong(name)),
-            column(4, paste("Genes:", count)),
-            column(4, actionButton(btnId, "Apply Filters", class = "btn-sm"))
+            column(3, paste("Genes:", count)),
+            column(3, actionButton(applyId, "Apply Filters", class = "btn-sm")),
+            column(2, actionButton(removeId, "Remove", class = "btn-danger btn-sm"))
           )
         })
       )
     }
   })
 
+  # Observer for Apply Filters buttons (unchanged)
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
       local({
         listName <- name
-        btnId <- paste0("apply_", gsub(" ", "_", name))
-        observeEvent(input[[btnId]], {
+        applyId <- paste0("apply_", gsub(" ", "_", name))
+        observeEvent(input[[applyId]], {
           saved_filters <- saved_gene_lists$data[[listName]]$filters
           for(key in names(saved_filters)) {
             val <- saved_filters[[key]]
@@ -157,6 +150,20 @@ server <- function(input, output, session) {
               updateSelectInput(session, key, selected = val)
             }
           }
+        }, ignoreInit = TRUE)
+      })
+    }
+  })
+
+  # Observer for Remove buttons: when clicked, remove the gene list.
+  observe({
+    req(saved_gene_lists$data)
+    for(name in names(saved_gene_lists$data)) {
+      local({
+        listName <- name
+        removeId <- paste0("remove_", gsub(" ", "_", name))
+        observeEvent(input[[removeId]], {
+          saved_gene_lists$data[[listName]] <- NULL
         }, ignoreInit = TRUE)
       })
     }
@@ -299,15 +306,14 @@ server <- function(input, output, session) {
     updateSelectInput(session, "scatter_y", choices = c("", cols_y), selected = "")
   })
 
-  # Update stacked bar chart column selectors when stack_table_x and stack_table_y change.
   observeEvent(input$stack_table_x, {
     cols <- dbListFields(con, input$stack_table_x)
     updateSelectInput(session, "stack_x", choices = c("", cols), selected = "")
   })
+
   observeEvent(input$stack_table_y, {
     tbl <- input$stack_table_y
     cols <- dbListFields(con, tbl)
-    # Only non-numeric columns for Y.
     factor_cols <- sapply(cols, function(col) {
       sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
       !is.numeric(sample_val)
@@ -315,7 +321,6 @@ server <- function(input, output, session) {
     updateSelectInput(session, "stack_y", choices = c("", cols[factor_cols]), selected = "")
   })
 
-  # Update gene list selectors for bar, violin, scatter, and stacked charts.
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
     updateSelectInput(session, "bar_gene_lists", choices = choices, selected = choices)
@@ -369,9 +374,10 @@ server <- function(input, output, session) {
       p <- plot_ly(data = combined, x = ~value, color = ~gene_list, type = "histogram",
                    histnorm = ifelse(input$bar_y_type=="Percentage", "percent", ""))
     } else {
+      print(head(combined))
       counts <- combined %>%
         group_by(gene_list, value = .data[[input$bar_col]]) %>%
-        summarise(count = n(), .groups = "drop")
+        summarise(count = n_distinct(GeneID), .groups = "drop")
       if(input$bar_y_type=="Percentage") {
         counts <- counts %>% group_by(gene_list) %>%
           mutate(percentage = count/sum(count)*100) %>% ungroup()
@@ -524,7 +530,6 @@ server <- function(input, output, session) {
         is.null(input$stack_gene_list) || input$stack_gene_list == "")
       return(noDataPlot())
 
-    # Get data from X table and Y table.
     if(input$stack_table_x == input$stack_table_y) {
       df_joint <- filtered_data(input$stack_table_x)()
     } else {
@@ -539,18 +544,15 @@ server <- function(input, output, session) {
     df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
     if(nrow(df_joint)==0) return(noDataPlot())
 
-    # Apply gene list filter (single selection)
     if(input$stack_gene_list != "Current List") {
       subset_genes <- saved_gene_lists$data[[input$stack_gene_list]]$genes
       df_joint <- df_joint[df_joint$GeneID %in% subset_genes, ]
       if(nrow(df_joint)==0) return(noDataPlot())
     }
 
-    # Get X values from stack_table_x and Y values from stack_table_y.
     xcol <- df_joint[[input$stack_x]]
     ycol <- df_joint[[input$stack_y]]
 
-    # If X is numeric, bin using the user-specified bin size.
     if(is.numeric(xcol)) {
       bin_size <- input$bin_size
       bins <- seq(min(xcol, na.rm = TRUE), max(xcol, na.rm = TRUE) + bin_size, by = bin_size)
@@ -558,15 +560,12 @@ server <- function(input, output, session) {
     } else {
       df_joint$bin <- as.factor(xcol)
     }
-    # Ensure Y column is treated as factor.
     df_joint$group <- as.factor(ycol)
 
     summary_df <- df_joint %>%
       group_by(bin, group) %>%
       summarise(count = n(), .groups = "drop") %>%
       ungroup()
-    # print(head(summary_df))
-    # Check Y-axis type: if "Percentage", compute percentages per bin.
     if(input$stack_y_type == "Percentage") {
       summary_df <- summary_df %>%
         group_by(bin) %>%
