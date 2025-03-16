@@ -4,41 +4,71 @@ library(duckdb)
 library(DBI)
 library(reactable)
 library(plotly)
+library(dplyr)
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
-# Get all table names; exclude "aggregated" for the individual table tabs.
+# Get all table names; exclude "aggregated" which is used for the aggregated data.
 all_tables <- dbListTables(con)
 individual_tables <- setdiff(all_tables, "aggregated")
 
 ui <- fluidPage(
   theme = bs_theme(bootswatch = "flatly"),
   titlePanel("Dynamic DuckDB Explorer"),
-  tabsetPanel(
-    # First top-level tab: Aggregated Data (filtered by intersection)
-    tabPanel("Aggregated Data",
-             reactableOutput("aggregated_table")
+  sidebarLayout(
+    sidebarPanel(
+      # Display filters for each individual table
+      lapply(individual_tables, function(tbl) {
+        tagList(
+          h4(tbl),
+          uiOutput(paste0("filters_", tbl))
+        )
+      })
     ),
-    # Second top-level tab: Individual Tables (with filters and plots)
-    tabPanel("Individual Tables",
-             # Nested tabset panel for each individual table.
-             do.call(tabsetPanel,
-                     lapply(individual_tables, function(tbl) {
-                       tabPanel(tbl,
-                                sidebarLayout(
-                                  sidebarPanel(
-                                    uiOutput(paste0("filters_", tbl))
-                                  ),
-                                  mainPanel(
-                                    reactableOutput(paste0(tbl, "_table")),
-                                    br(),
-                                    uiOutput(paste0("plot_selector_", tbl)),
-                                    plotlyOutput(paste0(tbl, "_plot"))
-                                  )
-                                )
-                       )
-                     })
-             )
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Table",
+                 reactableOutput("aggregated_table")
+        ),
+        tabPanel("Plot",
+                 tabsetPanel(
+                   tabPanel("Bar Chart",
+                            selectInput("bar_table", "Select table for Bar Chart:",
+                                        choices = individual_tables,
+                                        selected = individual_tables[1]),
+                            selectInput("bar_col", "Select column:",
+                                        choices = NULL, selected = ""),
+                            radioButtons("bar_y_type", "Y-axis type:",
+                                         choices = c("Count", "Percentage"),
+                                         selected = "Count", inline = TRUE),
+                            plotlyOutput("plot_bar")
+                   ),
+                   tabPanel("Violin Plot",
+                            selectInput("violin_table", "Select table for Violin Plot:",
+                                        choices = individual_tables,
+                                        selected = individual_tables[1]),
+                            selectInput("violin_col", "Select numeric column:",
+                                        choices = NULL, selected = ""),
+                            plotlyOutput("plot_violin")
+                   ),
+                   tabPanel("Scatter Plot",
+                            h4("For X Variable:"),
+                            selectInput("scatter_table_x", "Select table for X:",
+                                        choices = individual_tables,
+                                        selected = individual_tables[1]),
+                            selectInput("scatter_x", "Select X column:",
+                                        choices = NULL, selected = ""),
+                            h4("For Y Variable:"),
+                            selectInput("scatter_table_y", "Select table for Y:",
+                                        choices = individual_tables,
+                                        selected = individual_tables[1]),
+                            selectInput("scatter_y", "Select Y column:",
+                                        choices = NULL, selected = ""),
+                            plotlyOutput("plot_scatter")
+                   )
+                 )
+        )
+      )
     )
   )
 )
@@ -58,17 +88,14 @@ server <- function(input, output, session) {
       cols <- dbListFields(con, tbl)
       ui_list <- lapply(cols, function(col) {
         input_id <- paste(tbl, col, sep = "_")
-        # Sample value to determine type.
         sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
         if (is.numeric(sample_val)) {
-          # Numeric: sliderInput.
           vals <- dbGetQuery(con, sprintf("SELECT %s FROM %s WHERE %s IS NOT NULL", col, tbl, col))[[col]]
           sliderInput(input_id, label = col,
                       min = min(vals, na.rm = TRUE),
                       max = max(vals, na.rm = TRUE),
                       value = range(vals, na.rm = TRUE))
         } else {
-          # Non-numeric: multi-select input.
           vals <- get_choices(tbl, col)
           selectInput(input_id, label = col,
                       choices = c("All", vals),
@@ -76,17 +103,6 @@ server <- function(input, output, session) {
         }
       })
       do.call(tagList, ui_list)
-    })
-  })
-
-  # Generate dynamic plot column selector for each individual table.
-  lapply(individual_tables, function(tbl) {
-    output[[paste0("plot_selector_", tbl)]] <- renderUI({
-      cols <- dbListFields(con, tbl)
-      selectInput(inputId = paste0(tbl, "_plotcol"),
-                  label = "Select Column for Plot:",
-                  choices = cols,
-                  selected = cols[1])
     })
   })
 
@@ -121,34 +137,8 @@ server <- function(input, output, session) {
         sql <- paste(sql, "WHERE", paste(conditions, collapse = " AND "))
       }
       dbGetQuery(con, sql, params = params)
-    }) |> debounce(500)
+    }) |> debounce(5)
   }
-
-  # Render individual tables and plots.
-  lapply(individual_tables, function(tbl) {
-    output[[paste0(tbl, "_table")]] <- renderReactable({
-      df <- filtered_data(tbl)()
-      reactable(df, searchable = TRUE, pagination = TRUE)
-    })
-    output[[paste0(tbl, "_plot")]] <- renderPlotly({
-      df <- filtered_data(tbl)()
-      plotcol <- input[[paste0(tbl, "_plotcol")]]
-      if (is.null(plotcol) || nrow(df) == 0) return(NULL)
-      if (is.numeric(df[[plotcol]])) {
-        plot_ly(df, y = ~df[[plotcol]], type = "box") %>%
-          layout(title = paste("Box Plot of", plotcol),
-                 yaxis = list(title = plotcol))
-      } else {
-        counts <- as.data.frame(table(df[[plotcol]], useNA = "ifany"))
-        names(counts) <- c("value", "count")
-        counts$value[is.na(counts$value)] <- "NA"
-        plot_ly(counts, x = ~value, y = ~count, type = "bar") %>%
-          layout(title = paste("Bar Chart of", plotcol),
-                 xaxis = list(title = plotcol),
-                 yaxis = list(title = "Count"))
-      }
-    })
-  })
 
   # Reactive: Compute intersection of GeneIDs from all individual tables.
   intersected_gene_ids <- reactive({
@@ -160,7 +150,7 @@ server <- function(input, output, session) {
     Reduce(intersect, filtered_ids)
   })
 
-  # Render the Aggregated Data tab.
+  # Render the Aggregated Data table using the intersected GeneIDs.
   output$aggregated_table <- renderReactable({
     gene_ids <- intersected_gene_ids()
     if (length(gene_ids) == 0) {
@@ -170,6 +160,159 @@ server <- function(input, output, session) {
     sql <- paste("SELECT * FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = "")
     df <- dbGetQuery(con, sql, params = gene_ids)
     reactable(df, searchable = TRUE, pagination = TRUE)
+  })
+
+  # --- Update Bar Chart column selector ---
+  observeEvent(input$bar_table, {
+    cols <- dbListFields(con, input$bar_table)
+    updateSelectInput(session, "bar_col", choices = c("", cols), selected = "")
+  })
+
+  # --- Update Violin Plot column selector ---
+  observeEvent(input$violin_table, {
+    cols <- dbListFields(con, input$violin_table)
+    updateSelectInput(session, "violin_col", choices = c("", cols), selected = "")
+  })
+
+  # --- Update Scatter Plot X column selector ---
+  observeEvent(input$scatter_table_x, {
+    cols_x <- dbListFields(con, input$scatter_table_x)
+    updateSelectInput(session, "scatter_x", choices = c("", cols_x), selected = "")
+  })
+
+  # --- Update Scatter Plot Y column selector ---
+  observeEvent(input$scatter_table_y, {
+    cols_y <- dbListFields(con, input$scatter_table_y)
+    updateSelectInput(session, "scatter_y", choices = c("", cols_y), selected = "")
+  })
+
+  # --- Plot: Bar Chart ---
+  output$plot_bar <- renderPlotly({
+    if (is.null(input$bar_table) || input$bar_table == "" ||
+        is.null(input$bar_col) || input$bar_col == "") return(plotly_empty())
+
+    df <- filtered_data(input$bar_table)()
+    if (nrow(df) == 0) return(plotly_empty())
+
+    # Filter by intersected GeneIDs.
+    gene_ids <- intersected_gene_ids()
+    if (length(gene_ids) == 0) return(plotly_empty())
+    df <- df[df$GeneID %in% gene_ids, ]
+    if(nrow(df)==0) return(plotly_empty())
+
+    var <- df[[input$bar_col]]
+    if (is.numeric(var)) {
+      if(input$bar_y_type == "Percentage") {
+        p <- plot_ly(data = df, x = ~var, type = "histogram", histnorm = "percent") %>%
+          layout(title = paste("Histogram of", input$bar_col),
+                 xaxis = list(title = input$bar_col),
+                 yaxis = list(title = "Percentage"))
+      } else {
+        p <- plot_ly(data = df, x = ~var, type = "histogram") %>%
+          layout(title = paste("Histogram of", input$bar_col),
+                 xaxis = list(title = input$bar_col),
+                 yaxis = list(title = "Count"))
+      }
+    } else {
+      counts <- as.data.frame(table(var, useNA = "ifany"))
+      names(counts) <- c("value", "count")
+      if(input$bar_y_type == "Percentage") {
+        counts$percentage <- counts$count / sum(counts$count) * 100
+        p <- plot_ly(data = counts, x = ~value, y = ~percentage, type = "bar") %>%
+          layout(title = paste("Bar Chart of", input$bar_col),
+                 xaxis = list(title = input$bar_col),
+                 yaxis = list(title = "Percentage"))
+      } else {
+        p <- plot_ly(data = counts, x = ~value, y = ~count, type = "bar") %>%
+          layout(title = paste("Bar Chart of", input$bar_col),
+                 xaxis = list(title = input$bar_col),
+                 yaxis = list(title = "Count"))
+      }
+    }
+    p
+  })
+
+  # --- Plot: Violin Plot ---
+  output$plot_violin <- renderPlotly({
+    if (is.null(input$violin_table) || input$violin_table == "" ||
+        is.null(input$violin_col) || input$violin_col == "") {
+      return(plotly_empty())
+    }
+
+    df <- filtered_data(input$violin_table)()
+    if (nrow(df) == 0) return(plotly_empty())
+
+    # Filter by intersected GeneIDs.
+    gene_ids <- intersected_gene_ids()
+    if (length(gene_ids) == 0) return(plotly_empty())
+    df <- df[df$GeneID %in% gene_ids, ]
+    if(nrow(df)==0) return(plotly_empty())
+
+    var <- df[[input$violin_col]]
+    if (!is.numeric(var)) {
+      return(plot_ly() %>% layout(title = "Error",
+                                  annotations = list(
+                                    list(text = "Can't use factor for numeric plot",
+                                         showarrow = FALSE,
+                                         x = 0.5, y = 0.5,
+                                         xref = "paper", yref = "paper")
+                                  )))
+    }
+
+    p <- plot_ly(data = df, y = as.formula(paste0("~", input$violin_col)),
+                 type = "violin", box = list(visible = TRUE),
+                 meanline = list(visible = TRUE)) %>%
+      layout(title = paste("Violin Plot of", input$violin_col),
+             yaxis = list(title = input$violin_col))
+    p
+  })
+
+  # --- Plot: Scatter Plot ---
+  output$plot_scatter <- renderPlotly({
+    if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
+        is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
+        is.null(input$scatter_x) || input$scatter_x == "" ||
+        is.null(input$scatter_y) || input$scatter_y == "") {
+      return(plotly_empty())
+    }
+
+    # Get the intersected GeneIDs from all filters.
+    gene_ids <- intersected_gene_ids()
+    if(length(gene_ids)==0) return(plotly_empty())
+
+    # If the X and Y tables are the same, use that table's filtered data.
+    if (input$scatter_table_x == input$scatter_table_y) {
+      df_joint <- filtered_data(input$scatter_table_x)()
+      df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
+      if(nrow(df_joint)==0) return(plotly_empty())
+      if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint))){
+        return(plotly_empty())
+      }
+      xvar <- df_joint[[input$scatter_x]]
+      yvar <- df_joint[[input$scatter_y]]
+    } else {
+      # If different tables, join on GeneID.
+      df_x <- filtered_data(input$scatter_table_x)()
+      df_y <- filtered_data(input$scatter_table_y)()
+      df_x <- df_x[df_x$GeneID %in% gene_ids, ]
+      df_y <- df_y[df_y$GeneID %in% gene_ids, ]
+      df_joint <- inner_join(df_x, df_y, by = "GeneID")
+      if(nrow(df_joint)==0) return(plotly_empty())
+      if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint))){
+        return(plotly_empty())
+      }
+      xvar <- df_joint[[input$scatter_x]]
+      yvar <- df_joint[[input$scatter_y]]
+    }
+
+    if (is.factor(xvar)) xvar <- as.numeric(xvar) + rnorm(length(xvar), 0, 0.1)
+    if (is.factor(yvar)) yvar <- as.numeric(yvar) + rnorm(length(yvar), 0, 0.1)
+
+    p <- plot_ly(x = xvar, y = yvar, type = "scatter", mode = "markers") %>%
+      layout(title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
+             xaxis = list(title = input$scatter_x),
+             yaxis = list(title = input$scatter_y))
+    p
   })
 
 }
