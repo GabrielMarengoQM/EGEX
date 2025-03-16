@@ -26,12 +26,16 @@ ui <- fluidPage(
         accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui")),
         accordion_panel("Current Filters", uiOutput("current_filters")),
         accordion_panel("Filter Controls",
-                        lapply(individual_tables, function(tbl) {
-                          tagList(
-                            h4(tbl),
-                            uiOutput(paste0("filters_", tbl))
-                          )
-                        }))
+                        tagList(
+                          actionButton("clear_filters", "Clear Current Filters"),
+                          br(), br(),
+                          lapply(individual_tables, function(tbl) {
+                            tagList(
+                              h4(tbl),
+                              uiOutput(paste0("filters_", tbl))
+                            )
+                          })
+                        ))
       )
     ),
     mainPanel(
@@ -80,7 +84,34 @@ ui <- fluidPage(
                                         selected = individual_tables[1]),
                             selectInput("scatter_y", "Select Y column:",
                                         choices = NULL, selected = ""),
+                            # Multi-select for gene lists:
+                            selectInput("scatter_gene_lists", "Select Gene Lists:",
+                                        choices = NULL, selected = "Current List", multiple = TRUE),
                             plotlyOutput("plot_scatter")
+                   ),
+                   tabPanel("Stacked Bar Chart",
+                            # Two table selectors: one for X and one for Y.
+                            selectInput("stack_table_x", "Select table for X:",
+                                        choices = individual_tables,
+                                        selected = individual_tables[1]),
+                            selectInput("stack_x", "Select X column:",
+                                        choices = NULL, selected = ""),
+                            selectInput("stack_table_y", "Select table for Y:",
+                                        choices = individual_tables,
+                                        selected = individual_tables[1]),
+                            # For Y, only categorical (non-numeric) columns.
+                            selectInput("stack_y", "Select Y column (factor):",
+                                        choices = NULL, selected = ""),
+                            numericInput("bin_size", "Bin Size (for numeric X):",
+                                         value = 0, min = 0.1, step = 0.1),
+                            # Radio button to choose between Count and Percentage.
+                            radioButtons("stack_y_type", "Y-axis display:",
+                                         choices = c("Count", "Percentage"),
+                                         selected = "Percentage", inline = TRUE),
+                            # Single gene list selection for stacked chart.
+                            selectInput("stack_gene_list", "Select Gene List:",
+                                        choices = NULL, selected = "Current List"),
+                            plotlyOutput("plot_stack")
                    )
                  )
         )
@@ -110,7 +141,6 @@ server <- function(input, output, session) {
     }
   })
 
-  # Create dynamic observers for each saved gene list "Apply Filters" button.
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -164,7 +194,6 @@ server <- function(input, output, session) {
   })
 
   ### HELPER FUNCTIONS & DYNAMIC FILTER UI ###
-
   get_choices <- function(tbl, col) {
     query <- sprintf("SELECT DISTINCT %s FROM %s", col, tbl)
     vals <- dbGetQuery(con, query)[[col]]
@@ -199,7 +228,6 @@ server <- function(input, output, session) {
       cols <- dbListFields(con, tbl)
       conditions <- c()
       params <- list()
-
       for (col in cols) {
         input_id <- paste(tbl, col, sep = "_")
         sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
@@ -252,8 +280,13 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$violin_table, {
-    cols <- dbListFields(con, input$violin_table)
-    updateSelectInput(session, "violin_col", choices = c("", cols), selected = "")
+    tbl <- input$violin_table
+    cols <- dbListFields(con, tbl)
+    numeric_cols <- sapply(cols, function(col) {
+      sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+      is.numeric(sample_val)
+    })
+    updateSelectInput(session, "violin_col", choices = c("", cols[numeric_cols]), selected = "")
   })
 
   observeEvent(input$scatter_table_x, {
@@ -266,11 +299,29 @@ server <- function(input, output, session) {
     updateSelectInput(session, "scatter_y", choices = c("", cols_y), selected = "")
   })
 
-  # Update gene list selectors for bar and violin plots.
+  # Update stacked bar chart column selectors when stack_table_x and stack_table_y change.
+  observeEvent(input$stack_table_x, {
+    cols <- dbListFields(con, input$stack_table_x)
+    updateSelectInput(session, "stack_x", choices = c("", cols), selected = "")
+  })
+  observeEvent(input$stack_table_y, {
+    tbl <- input$stack_table_y
+    cols <- dbListFields(con, tbl)
+    # Only non-numeric columns for Y.
+    factor_cols <- sapply(cols, function(col) {
+      sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+      !is.numeric(sample_val)
+    })
+    updateSelectInput(session, "stack_y", choices = c("", cols[factor_cols]), selected = "")
+  })
+
+  # Update gene list selectors for bar, violin, scatter, and stacked charts.
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
     updateSelectInput(session, "bar_gene_lists", choices = choices, selected = choices)
     updateSelectInput(session, "violin_gene_lists", choices = choices, selected = choices)
+    updateSelectInput(session, "scatter_gene_lists", choices = choices, selected = "Current List")
+    updateSelectInput(session, "stack_gene_list", choices = choices, selected = "Current List")
   })
 
   noDataPlot <- function() {
@@ -299,7 +350,6 @@ server <- function(input, output, session) {
     df <- df[df$GeneID %in% gene_ids, ]
     if(nrow(df) == 0) return(noDataPlot())
 
-    # Row bind subsets for each selected gene list.
     combined <- do.call(rbind, lapply(input$bar_gene_lists, function(listName) {
       if(listName == "Current List") {
         subset_genes <- intersected_gene_ids()
@@ -313,14 +363,12 @@ server <- function(input, output, session) {
     }))
     if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
 
-    # For convenience, create a new column "value" holding the selected column's values.
     combined$value <- combined[[input$bar_col]]
 
     if(is.numeric(combined$value)) {
       p <- plot_ly(data = combined, x = ~value, color = ~gene_list, type = "histogram",
                    histnorm = ifelse(input$bar_y_type=="Percentage", "percent", ""))
     } else {
-      # For non-numeric columns, compute counts per group.
       counts <- combined %>%
         group_by(gene_list, value = .data[[input$bar_col]]) %>%
         summarise(count = n(), .groups = "drop")
@@ -379,7 +427,6 @@ server <- function(input, output, session) {
                                   )))
     }
 
-    # Create hover text for each row.
     combined$hover_text <- paste("Gene: ", combined$GeneID, "<br>",
                                  input$violin_col, ": ", combined$value)
 
@@ -395,12 +442,13 @@ server <- function(input, output, session) {
     p
   })
 
-  ### SCATTER PLOT OUTPUT (unchanged) ###
+  ### SCATTER PLOT OUTPUT ###
   output$plot_scatter <- renderPlotly({
     if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
         is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
         is.null(input$scatter_x) || input$scatter_x == "" ||
-        is.null(input$scatter_y) || input$scatter_y == "")
+        is.null(input$scatter_y) || input$scatter_y == "" ||
+        is.null(input$scatter_gene_lists) || length(input$scatter_gene_lists)==0)
       return(noDataPlot())
 
     gene_ids <- intersected_gene_ids()
@@ -429,19 +477,113 @@ server <- function(input, output, session) {
       geneid <- df_joint$GeneID
     }
 
+    combined <- do.call(rbind, lapply(input$scatter_gene_lists, function(listName) {
+      if(listName == "Current List") {
+        subset_genes <- intersected_gene_ids()
+      } else {
+        subset_genes <- saved_gene_lists$data[[listName]]$genes
+      }
+      df_subset <- df_joint[df_joint$GeneID %in% subset_genes, , drop = FALSE]
+      if(nrow(df_subset)==0) return(NULL)
+      df_subset$gene_list <- listName
+      df_subset
+    }))
+    if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+
+    xvar <- combined[[input$scatter_x]]
+    yvar <- combined[[input$scatter_y]]
+    geneid <- combined$GeneID
+
     if (is.factor(xvar)) xvar <- as.numeric(xvar) + rnorm(length(xvar), 0, 0.1)
     if (is.factor(yvar)) yvar <- as.numeric(yvar) + rnorm(length(yvar), 0, 0.1)
 
-    p <- plot_ly(data = df_joint,
+    combined$xvar <- xvar
+    combined$yvar <- yvar
+
+    p <- plot_ly(data = combined,
                  x = ~xvar,
                  y = ~yvar,
                  type = "scatter",
                  mode = "markers",
+                 color = ~gene_list,
                  text = ~paste("GeneID:", geneid),
                  hoverinfo = "text+x+y") %>%
       layout(title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
              xaxis = list(title = input$scatter_x),
              yaxis = list(title = input$scatter_y))
+    p
+  })
+
+  ### STACKED BAR CHART OUTPUT ###
+  output$plot_stack <- renderPlotly({
+    if (is.null(input$stack_table_x) || input$stack_table_x == "" ||
+        is.null(input$stack_x) || input$stack_x == "" ||
+        is.null(input$stack_table_y) || input$stack_table_y == "" ||
+        is.null(input$stack_y) || input$stack_y == "" ||
+        is.null(input$bin_size) || is.na(input$bin_size) ||
+        is.null(input$stack_gene_list) || input$stack_gene_list == "")
+      return(noDataPlot())
+
+    # Get data from X table and Y table.
+    if(input$stack_table_x == input$stack_table_y) {
+      df_joint <- filtered_data(input$stack_table_x)()
+    } else {
+      df_x <- filtered_data(input$stack_table_x)()
+      df_y <- filtered_data(input$stack_table_y)()
+      df_joint <- inner_join(df_x, df_y, by = "GeneID")
+    }
+    if(nrow(df_joint)==0) return(noDataPlot())
+
+    gene_ids <- intersected_gene_ids()
+    if(length(gene_ids)==0) return(noDataPlot())
+    df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
+    if(nrow(df_joint)==0) return(noDataPlot())
+
+    # Apply gene list filter (single selection)
+    if(input$stack_gene_list != "Current List") {
+      subset_genes <- saved_gene_lists$data[[input$stack_gene_list]]$genes
+      df_joint <- df_joint[df_joint$GeneID %in% subset_genes, ]
+      if(nrow(df_joint)==0) return(noDataPlot())
+    }
+
+    # Get X values from stack_table_x and Y values from stack_table_y.
+    xcol <- df_joint[[input$stack_x]]
+    ycol <- df_joint[[input$stack_y]]
+
+    # If X is numeric, bin using the user-specified bin size.
+    if(is.numeric(xcol)) {
+      bin_size <- input$bin_size
+      bins <- seq(min(xcol, na.rm = TRUE), max(xcol, na.rm = TRUE) + bin_size, by = bin_size)
+      df_joint$bin <- cut(xcol, breaks = bins, include.lowest = TRUE, right = FALSE)
+    } else {
+      df_joint$bin <- as.factor(xcol)
+    }
+    # Ensure Y column is treated as factor.
+    df_joint$group <- as.factor(ycol)
+
+    summary_df <- df_joint %>%
+      group_by(bin, group) %>%
+      summarise(count = n(), .groups = "drop") %>%
+      ungroup()
+    # print(head(summary_df))
+    # Check Y-axis type: if "Percentage", compute percentages per bin.
+    if(input$stack_y_type == "Percentage") {
+      summary_df <- summary_df %>%
+        group_by(bin) %>%
+        mutate(percentage = count / sum(count) * 100) %>%
+        ungroup()
+      y_val <- summary_df$percentage
+      y_title <- "Percentage"
+    } else {
+      y_val <- summary_df$count
+      y_title <- "Count"
+    }
+
+    p <- plot_ly(data = summary_df, x = ~bin, y = ~y_val, color = ~group, type = "bar") %>%
+      layout(title = paste("Stacked Bar Chart: % of", input$stack_y, "by", input$stack_x),
+             xaxis = list(title = input$stack_x),
+             yaxis = list(title = y_title),
+             barmode = "stack")
     p
   })
 
@@ -472,6 +614,29 @@ server <- function(input, output, session) {
       filters = saved_filters
     )
     removeModal()
+  })
+
+  observe({
+    choices <- c("Current List", names(saved_gene_lists$data))
+    updateSelectInput(session, "scatter_gene_lists", choices = choices, selected = "Current List")
+    updateSelectInput(session, "stack_gene_list", choices = choices, selected = "Current List")
+  })
+
+  observeEvent(input$clear_filters, {
+    for(tbl in individual_tables) {
+      cols <- dbListFields(con, tbl)
+      for(col in cols) {
+        input_id <- paste(tbl, col, sep = "_")
+        sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+        if(is.numeric(sample_val)) {
+          vals <- dbGetQuery(con, sprintf("SELECT %s FROM %s WHERE %s IS NOT NULL", col, tbl, col))[[col]]
+          default_val <- range(vals, na.rm = TRUE)
+          updateSliderInput(session, input_id, value = default_val)
+        } else {
+          updateSelectInput(session, input_id, selected = "All")
+        }
+      }
+    }
   })
 
 }
