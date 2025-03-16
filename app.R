@@ -17,13 +17,19 @@ ui <- fluidPage(
   titlePanel("Dynamic DuckDB Explorer"),
   sidebarLayout(
     sidebarPanel(
-      # Display filters for each individual table
-      lapply(individual_tables, function(tbl) {
-        tagList(
-          h4(tbl),
-          uiOutput(paste0("filters_", tbl))
-        )
-      })
+      # Use bslib accordion with two panels:
+      accordion(
+        accordion_panel("Current Filters",
+                        verbatimTextOutput("current_filters")),
+        accordion_panel("Filter Controls",
+                        # For each table, display its filter UI.
+                        lapply(individual_tables, function(tbl) {
+                          tagList(
+                            h4(tbl),
+                            uiOutput(paste0("filters_", tbl))
+                          )
+                        }))
+      )
     ),
     mainPanel(
       tabsetPanel(
@@ -49,16 +55,15 @@ ui <- fluidPage(
                                         selected = individual_tables[1]),
                             selectInput("violin_col", "Select numeric column:",
                                         choices = NULL, selected = ""),
+                            checkboxInput("violin_show_points", "Show all points", value = FALSE),
                             plotlyOutput("plot_violin")
                    ),
                    tabPanel("Scatter Plot",
-                            h4("For X Variable:"),
                             selectInput("scatter_table_x", "Select table for X:",
                                         choices = individual_tables,
                                         selected = individual_tables[1]),
                             selectInput("scatter_x", "Select X column:",
                                         choices = NULL, selected = ""),
-                            h4("For Y Variable:"),
                             selectInput("scatter_table_y", "Select table for Y:",
                                         choices = individual_tables,
                                         selected = individual_tables[1]),
@@ -74,6 +79,17 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+
+  # Display only filter-related inputs (keys starting with one of the table names).
+  output$current_filters <- renderPrint({
+    all_inputs <- reactiveValuesToList(input)
+    filter_keys <- names(all_inputs)[sapply(names(all_inputs), function(x) {
+      any(sapply(individual_tables, function(tbl) {
+        startsWith(x, paste0(tbl, "_"))
+      }))
+    })]
+    all_inputs[filter_keys]
+  })
 
   # Helper: Get distinct non-NA values for a given table/column.
   get_choices <- function(tbl, col) {
@@ -106,7 +122,7 @@ server <- function(input, output, session) {
     })
   })
 
-  # Function: Build reactive filtered data for a given table.
+  # Build reactive filtered data for a given table.
   filtered_data <- function(tbl) {
     reactive({
       cols <- dbListFields(con, tbl)
@@ -140,7 +156,7 @@ server <- function(input, output, session) {
     }) |> debounce(5)
   }
 
-  # Reactive: Compute intersection of GeneIDs from all individual tables.
+  # Compute intersection of GeneIDs from all individual tables.
   intersected_gene_ids <- reactive({
     filtered_ids <- lapply(individual_tables, function(tbl) {
       df <- filtered_data(tbl)()
@@ -186,23 +202,34 @@ server <- function(input, output, session) {
     updateSelectInput(session, "scatter_y", choices = c("", cols_y), selected = "")
   })
 
+  # Helper function for "No data to plot" message.
+  noDataPlot <- function() {
+    plot_ly() %>%
+      layout(title = "No data to plot",
+             annotations = list(
+               list(text = "No data to plot",
+                    showarrow = FALSE,
+                    x = 0.5, y = 0.5,
+                    xref = "paper", yref = "paper")
+             ))
+  }
+
   # --- Plot: Bar Chart ---
   output$plot_bar <- renderPlotly({
     if (is.null(input$bar_table) || input$bar_table == "" ||
-        is.null(input$bar_col) || input$bar_col == "") return(plotly_empty())
+        is.null(input$bar_col) || input$bar_col == "") return(noDataPlot())
 
     df <- filtered_data(input$bar_table)()
-    if (nrow(df) == 0) return(plotly_empty())
+    if (nrow(df) == 0) return(noDataPlot())
 
-    # Filter by intersected GeneIDs.
     gene_ids <- intersected_gene_ids()
-    if (length(gene_ids) == 0) return(plotly_empty())
+    if (length(gene_ids) == 0) return(noDataPlot())
     df <- df[df$GeneID %in% gene_ids, ]
-    if(nrow(df)==0) return(plotly_empty())
+    if (nrow(df) == 0) return(noDataPlot())
 
     var <- df[[input$bar_col]]
     if (is.numeric(var)) {
-      if(input$bar_y_type == "Percentage") {
+      if (input$bar_y_type == "Percentage") {
         p <- plot_ly(data = df, x = ~var, type = "histogram", histnorm = "percent") %>%
           layout(title = paste("Histogram of", input$bar_col),
                  xaxis = list(title = input$bar_col),
@@ -216,7 +243,7 @@ server <- function(input, output, session) {
     } else {
       counts <- as.data.frame(table(var, useNA = "ifany"))
       names(counts) <- c("value", "count")
-      if(input$bar_y_type == "Percentage") {
+      if (input$bar_y_type == "Percentage") {
         counts$percentage <- counts$count / sum(counts$count) * 100
         p <- plot_ly(data = counts, x = ~value, y = ~percentage, type = "bar") %>%
           layout(title = paste("Bar Chart of", input$bar_col),
@@ -236,17 +263,16 @@ server <- function(input, output, session) {
   output$plot_violin <- renderPlotly({
     if (is.null(input$violin_table) || input$violin_table == "" ||
         is.null(input$violin_col) || input$violin_col == "") {
-      return(plotly_empty())
+      return(noDataPlot())
     }
 
     df <- filtered_data(input$violin_table)()
-    if (nrow(df) == 0) return(plotly_empty())
+    if (nrow(df) == 0) return(noDataPlot())
 
-    # Filter by intersected GeneIDs.
     gene_ids <- intersected_gene_ids()
-    if (length(gene_ids) == 0) return(plotly_empty())
+    if (length(gene_ids) == 0) return(noDataPlot())
     df <- df[df$GeneID %in% gene_ids, ]
-    if(nrow(df)==0) return(plotly_empty())
+    if(nrow(df)==0) return(noDataPlot())
 
     var <- df[[input$violin_col]]
     if (!is.numeric(var)) {
@@ -259,9 +285,18 @@ server <- function(input, output, session) {
                                   )))
     }
 
-    p <- plot_ly(data = df, y = as.formula(paste0("~", input$violin_col)),
-                 type = "violin", box = list(visible = TRUE),
-                 meanline = list(visible = TRUE)) %>%
+    # Create hover text that displays GeneID and the selected column's value.
+    df$hover_text <- paste("Gene: ", df$GeneID, "<br>",
+                           input$violin_col, ": ", df[[input$violin_col]])
+
+    p <- plot_ly(data = df,
+                 y = as.formula(paste0("~", input$violin_col)),
+                 type = "violin",
+                 box = list(visible = TRUE),
+                 meanline = list(visible = TRUE),
+                 points = ifelse(input$violin_show_points, "all", "outliers"),
+                 text = ~hover_text,
+                 hoverinfo = "text") %>%
       layout(title = paste("Violin Plot of", input$violin_col),
              yaxis = list(title = input$violin_col))
     p
@@ -273,42 +308,48 @@ server <- function(input, output, session) {
         is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
         is.null(input$scatter_x) || input$scatter_x == "" ||
         is.null(input$scatter_y) || input$scatter_y == "") {
-      return(plotly_empty())
+      return(noDataPlot())
     }
 
-    # Get the intersected GeneIDs from all filters.
     gene_ids <- intersected_gene_ids()
-    if(length(gene_ids)==0) return(plotly_empty())
+    if(length(gene_ids)==0) return(noDataPlot())
 
-    # If the X and Y tables are the same, use that table's filtered data.
     if (input$scatter_table_x == input$scatter_table_y) {
       df_joint <- filtered_data(input$scatter_table_x)()
       df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
-      if(nrow(df_joint)==0) return(plotly_empty())
+      if(nrow(df_joint)==0) return(noDataPlot())
       if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint))){
-        return(plotly_empty())
+        return(noDataPlot())
       }
       xvar <- df_joint[[input$scatter_x]]
       yvar <- df_joint[[input$scatter_y]]
+      # Retain GeneID for hover text.
+      geneid <- df_joint$GeneID
     } else {
-      # If different tables, join on GeneID.
       df_x <- filtered_data(input$scatter_table_x)()
       df_y <- filtered_data(input$scatter_table_y)()
       df_x <- df_x[df_x$GeneID %in% gene_ids, ]
       df_y <- df_y[df_y$GeneID %in% gene_ids, ]
       df_joint <- inner_join(df_x, df_y, by = "GeneID")
-      if(nrow(df_joint)==0) return(plotly_empty())
+      if(nrow(df_joint)==0) return(noDataPlot())
       if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint))){
-        return(plotly_empty())
+        return(noDataPlot())
       }
       xvar <- df_joint[[input$scatter_x]]
       yvar <- df_joint[[input$scatter_y]]
+      geneid <- df_joint$GeneID
     }
 
     if (is.factor(xvar)) xvar <- as.numeric(xvar) + rnorm(length(xvar), 0, 0.1)
     if (is.factor(yvar)) yvar <- as.numeric(yvar) + rnorm(length(yvar), 0, 0.1)
 
-    p <- plot_ly(x = xvar, y = yvar, type = "scatter", mode = "markers") %>%
+    p <- plot_ly(data = df_joint,
+                 x = ~xvar,
+                 y = ~yvar,
+                 type = "scatter",
+                 mode = "markers",
+                 text = ~paste("GeneID:", geneid),
+                 hoverinfo = "text+x+y") %>%
       layout(title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
              xaxis = list(title = input$scatter_x),
              yaxis = list(title = input$scatter_y))
