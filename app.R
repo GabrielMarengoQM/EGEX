@@ -12,17 +12,20 @@ con <- dbConnect(duckdb(), "mydb.duckdb")
 all_tables <- dbListTables(con)
 individual_tables <- setdiff(all_tables, "aggregated")
 
+# Reactive value to store saved gene lists.
+# Each saved list is a list with two elements: "genes" and "filters".
+saved_gene_lists <- reactiveValues(data = list())
+
 ui <- fluidPage(
   theme = bs_theme(bootswatch = "flatly"),
   titlePanel("Dynamic DuckDB Explorer"),
   sidebarLayout(
     sidebarPanel(
-      # Use bslib accordion with two panels:
+      # Accordion with three panels:
       accordion(
-        accordion_panel("Current Filters",
-                        verbatimTextOutput("current_filters")),
+        accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui")),
+        accordion_panel("Current Filters", uiOutput("current_filters")),
         accordion_panel("Filter Controls",
-                        # For each table, display its filter UI.
                         lapply(individual_tables, function(tbl) {
                           tagList(
                             h4(tbl),
@@ -34,6 +37,9 @@ ui <- fluidPage(
     mainPanel(
       tabsetPanel(
         tabPanel("Table",
+                 # "Save Gene List" button
+                 actionButton("save_gene_list", "Save Gene List"),
+                 br(), br(),
                  reactableOutput("aggregated_table")
         ),
         tabPanel("Plot",
@@ -80,16 +86,86 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
 
-  # Display only filter-related inputs (keys starting with one of the table names).
-  output$current_filters <- renderPrint({
+  ### SAVED GENE LISTS UI and APPLY OBSERVERS ###
+
+  # Render Saved Gene Lists as a UI table with an "Apply Filters" button for each.
+  output$saved_gene_lists_ui <- renderUI({
+    if(length(saved_gene_lists$data) == 0) {
+      HTML("<em>No saved gene lists.</em>")
+    } else {
+      tagList(
+        lapply(names(saved_gene_lists$data), function(name) {
+          count <- length(saved_gene_lists$data[[name]]$genes)
+          # Create a unique button id safe for use (replace spaces with underscores)
+          btnId <- paste0("apply_", gsub(" ", "_", name))
+          fluidRow(
+            column(4, strong(name)),
+            column(4, paste("Genes:", count)),
+            column(4, actionButton(btnId, "Apply Filters", class = "btn-sm"))
+          )
+        })
+      )
+    }
+  })
+
+  # Create dynamic observers for each saved gene list "Apply Filters" button.
+  observe({
+    req(saved_gene_lists$data)
+    for(name in names(saved_gene_lists$data)) {
+      local({
+        listName <- name
+        btnId <- paste0("apply_", gsub(" ", "_", listName))
+        observeEvent(input[[btnId]], {
+          # Retrieve the saved filters for this list.
+          saved_filters <- saved_gene_lists$data[[listName]]$filters
+          # Loop over each saved filter and update the corresponding input.
+          for(key in names(saved_filters)) {
+            val <- saved_filters[[key]]
+            # If the saved value is numeric, assume sliderInput.
+            if(is.numeric(val)) {
+              updateSliderInput(session, key, value = val)
+            } else {
+              updateSelectInput(session, key, selected = val)
+            }
+          }
+        }, ignoreInit = TRUE)
+      })
+    }
+  })
+
+  ### CURRENT FILTERS PANEL ###
+  output$current_filters <- renderUI({
     all_inputs <- reactiveValuesToList(input)
+    # Filter keys that begin with any of the table names.
     filter_keys <- names(all_inputs)[sapply(names(all_inputs), function(x) {
       any(sapply(individual_tables, function(tbl) {
         startsWith(x, paste0(tbl, "_"))
       }))
     })]
-    all_inputs[filter_keys]
+    filters <- all_inputs[filter_keys]
+    tables <- unique(sapply(filter_keys, function(x) strsplit(x, "_")[[1]][1]))
+    html_out <- ""
+    for(tbl in tables) {
+      tbl_keys <- filter_keys[startsWith(filter_keys, paste0(tbl, "_"))]
+      rows <- sapply(tbl_keys, function(key) {
+        colname <- sub(paste0("^", tbl, "_"), "", key)
+        value <- filters[[key]]
+        if (is.vector(value) && length(value) > 1) {
+          value <- paste(value, collapse = ", ")
+        }
+        paste0("<tr><td style='padding:4px;'><strong>", colname, "</strong></td>",
+               "<td style='padding:4px;'>", value, "</td></tr>")
+      })
+      tbl_html <- paste0("<h4>", tbl, "</h4>",
+                         "<table style='width:100%; border-collapse: collapse; border: 1px solid #ccc;'>",
+                         "<tr><th style='padding:4px;'>Filter</th><th style='padding:4px;'>Value</th></tr>",
+                         paste(rows, collapse = ""), "</table>")
+      html_out <- paste(html_out, tbl_html, sep = "<br>")
+    }
+    HTML(html_out)
   })
+
+  ### HELPER FUNCTIONS AND DYNAMIC FILTER UI ###
 
   # Helper: Get distinct non-NA values for a given table/column.
   get_choices <- function(tbl, col) {
@@ -98,7 +174,7 @@ server <- function(input, output, session) {
     unique(vals[!is.na(vals)])
   }
 
-  # Generate dynamic filter UI for each individual table.
+  # Generate dynamic filter UI for each table.
   lapply(individual_tables, function(tbl) {
     output[[paste0("filters_", tbl)]] <- renderUI({
       cols <- dbListFields(con, tbl)
@@ -147,7 +223,6 @@ server <- function(input, output, session) {
           }
         }
       }
-
       sql <- paste("SELECT * FROM", tbl)
       if (length(conditions) > 0) {
         sql <- paste(sql, "WHERE", paste(conditions, collapse = " AND "))
@@ -166,7 +241,8 @@ server <- function(input, output, session) {
     Reduce(intersect, filtered_ids)
   })
 
-  # Render the Aggregated Data table using the intersected GeneIDs.
+  ### AGGREGATED TABLE OUTPUT ###
+
   output$aggregated_table <- renderReactable({
     gene_ids <- intersected_gene_ids()
     if (length(gene_ids) == 0) {
@@ -175,34 +251,33 @@ server <- function(input, output, session) {
     placeholders <- paste(rep("?", length(gene_ids)), collapse = ", ")
     sql <- paste("SELECT * FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = "")
     df <- dbGetQuery(con, sql, params = gene_ids)
-    reactable(df, searchable = TRUE, pagination = TRUE)
+    reactable(df, searchable = TRUE, filterable = TRUE, pagination = TRUE)
   })
 
-  # --- Update Bar Chart column selector ---
+  ### UPDATE COLUMN SELECTORS FOR PLOTS ###
+
   observeEvent(input$bar_table, {
     cols <- dbListFields(con, input$bar_table)
     updateSelectInput(session, "bar_col", choices = c("", cols), selected = "")
   })
 
-  # --- Update Violin Plot column selector ---
   observeEvent(input$violin_table, {
     cols <- dbListFields(con, input$violin_table)
     updateSelectInput(session, "violin_col", choices = c("", cols), selected = "")
   })
 
-  # --- Update Scatter Plot X column selector ---
   observeEvent(input$scatter_table_x, {
     cols_x <- dbListFields(con, input$scatter_table_x)
     updateSelectInput(session, "scatter_x", choices = c("", cols_x), selected = "")
   })
 
-  # --- Update Scatter Plot Y column selector ---
   observeEvent(input$scatter_table_y, {
     cols_y <- dbListFields(con, input$scatter_table_y)
     updateSelectInput(session, "scatter_y", choices = c("", cols_y), selected = "")
   })
 
-  # Helper function for "No data to plot" message.
+  ### HELPER FUNCTION: NO DATA PLOT ###
+
   noDataPlot <- function() {
     plot_ly() %>%
       layout(title = "No data to plot",
@@ -214,7 +289,8 @@ server <- function(input, output, session) {
              ))
   }
 
-  # --- Plot: Bar Chart ---
+  ### BAR CHART OUTPUT ###
+
   output$plot_bar <- renderPlotly({
     if (is.null(input$bar_table) || input$bar_table == "" ||
         is.null(input$bar_col) || input$bar_col == "") return(noDataPlot())
@@ -225,7 +301,7 @@ server <- function(input, output, session) {
     gene_ids <- intersected_gene_ids()
     if (length(gene_ids) == 0) return(noDataPlot())
     df <- df[df$GeneID %in% gene_ids, ]
-    if (nrow(df) == 0) return(noDataPlot())
+    if(nrow(df) == 0) return(noDataPlot())
 
     var <- df[[input$bar_col]]
     if (is.numeric(var)) {
@@ -259,7 +335,8 @@ server <- function(input, output, session) {
     p
   })
 
-  # --- Plot: Violin Plot ---
+  ### VIOLIN PLOT OUTPUT ###
+
   output$plot_violin <- renderPlotly({
     if (is.null(input$violin_table) || input$violin_table == "" ||
         is.null(input$violin_col) || input$violin_col == "") {
@@ -302,7 +379,8 @@ server <- function(input, output, session) {
     p
   })
 
-  # --- Plot: Scatter Plot ---
+  ### SCATTER PLOT OUTPUT ###
+
   output$plot_scatter <- renderPlotly({
     if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
         is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
@@ -323,7 +401,6 @@ server <- function(input, output, session) {
       }
       xvar <- df_joint[[input$scatter_x]]
       yvar <- df_joint[[input$scatter_y]]
-      # Retain GeneID for hover text.
       geneid <- df_joint$GeneID
     } else {
       df_x <- filtered_data(input$scatter_table_x)()
@@ -354,6 +431,39 @@ server <- function(input, output, session) {
              xaxis = list(title = input$scatter_x),
              yaxis = list(title = input$scatter_y))
     p
+  })
+
+  ### SAVE GENE LIST FUNCTIONALITY ###
+
+  # Show a modal dialog when "Save Gene List" is clicked.
+  observeEvent(input$save_gene_list, {
+    showModal(modalDialog(
+      title = "Save Gene List",
+      textInput("gene_list_name", "Enter a name for this gene list:"),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_save", "Save")
+      )
+    ))
+  })
+
+  # When "confirm_save" is clicked, save the current gene list and filters.
+  observeEvent(input$confirm_save, {
+    req(input$gene_list_name)
+    current_genes <- intersected_gene_ids()
+    # Save only filter inputs that correspond to the tables.
+    current_filters <- reactiveValuesToList(input)
+    filter_keys <- names(current_filters)[sapply(names(current_filters), function(x) {
+      any(sapply(individual_tables, function(tbl) {
+        startsWith(x, paste0(tbl, "_"))
+      }))
+    })]
+    saved_filters <- current_filters[filter_keys]
+    saved_gene_lists$data[[input$gene_list_name]] <- list(
+      genes = current_genes,
+      filters = saved_filters
+    )
+    removeModal()
   })
 
 }
