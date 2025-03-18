@@ -4,7 +4,7 @@ set.seed(123)
 num_genes <- 200
 gene_ids <- sprintf("G%05d", 1:num_genes)
 
-## WITH "NA" as a string for missing numeric values ----
+## WITH NA as a string for missing numeric values ----
 
 # ---------------------------
 # Genes Table (one-to-one)
@@ -17,9 +17,9 @@ genes <- data.frame(
 )
 # Introduce ~50% missingness in GeneSymbol and Position
 na_idx <- sample(1:num_genes, size = round(0.5 * num_genes))
-genes$GeneSymbol[na_idx] <- "NA"
+genes$GeneSymbol[na_idx] <- NA
 na_idx <- sample(1:num_genes, size = round(0.5 * num_genes))
-genes$Position[na_idx] <- "NA"
+genes$Position[na_idx] <- NA
 
 # ---------------------------
 # Phenotypes Table (one-to-many)
@@ -35,11 +35,11 @@ phenotypes <- do.call(rbind, lapply(gene_ids, function(id) {
   # Introduce ~50% missingness in Phenotype, Severity, and Prevalence
   if(n > 0){
     na_idx <- sample(1:n, size = round(0.5 * n))
-    df$Phenotype[na_idx] <- "NA"
+    df$Phenotype[na_idx] <- NA
     na_idx2 <- sample(1:n, size = round(0.5 * n))
-    df$Severity[na_idx2] <- "NA"
+    df$Severity[na_idx2] <- NA
     na_idx3 <- sample(1:n, size = round(0.5 * n))
-    df$Prevalence[na_idx3] <- "NA"
+    df$Prevalence[na_idx3] <- NA
   }
   df
 }))
@@ -58,9 +58,9 @@ constraints <- do.call(rbind, lapply(gene_ids, function(id) {
   # Introduce ~50% missingness in ConstraintMetric and Score
   if(n > 0){
     na_idx <- sample(1:n, size = round(0.5 * n))
-    df$ConstraintMetric[na_idx] <- "NA"
+    df$ConstraintMetric[na_idx] <- NA
     na_idx2 <- sample(1:n, size = round(0.5 * n))
-    df$Score[na_idx2] <- "NA"
+    df$Score[na_idx2] <- NA
   }
   df
 }))
@@ -75,9 +75,9 @@ expression <- data.frame(
 )
 # Introduce ~50% missingness in Tissue and TPM
 na_idx <- sample(1:num_genes, size = round(0.5 * num_genes))
-expression$Tissue[na_idx] <- "NA"
+expression$Tissue[na_idx] <- NA
 na_idx <- sample(1:num_genes, size = round(0.5 * num_genes))
-expression$TPM[na_idx] <- "NA"
+expression$TPM[na_idx] <- NA
 
 # ---------------------------
 # Pathways Table (one-to-many)
@@ -92,9 +92,9 @@ pathways <- do.call(rbind, lapply(gene_ids, function(id) {
   # Introduce ~50% missingness in Pathway and Importance
   if(n > 0){
     na_idx <- sample(1:n, size = round(0.5 * n))
-    df$Pathway[na_idx] <- "NA"
+    df$Pathway[na_idx] <- NA
     na_idx2 <- sample(1:n, size = round(0.5 * n))
-    df$Importance[na_idx2] <- "NA"
+    df$Importance[na_idx2] <- NA
   }
   df
 }))
@@ -112,9 +112,9 @@ variants <- do.call(rbind, lapply(gene_ids, function(id) {
   # Introduce ~50% missingness in VariantType and Frequency
   if(n > 0){
     na_idx <- sample(1:n, size = round(0.5 * n))
-    df$VariantType[na_idx] <- "NA"
+    df$VariantType[na_idx] <- NA
     na_idx2 <- sample(1:n, size = round(0.5 * n))
-    df$Frequency[na_idx2] <- "NA"
+    df$Frequency[na_idx2] <- NA
   }
   df
 }))
@@ -132,7 +132,7 @@ publications <- do.call(rbind, lapply(gene_ids, function(id) {
   # Introduce ~50% missingness in Year
   if(n > 0){
     na_idx <- sample(1:n, size = round(0.5 * n))
-    df$Year[na_idx] <- "NA"
+    df$Year[na_idx] <- NA
   }
   df
 }))
@@ -150,9 +150,9 @@ protein_interactions <- do.call(rbind, lapply(gene_ids, function(id) {
   # Introduce ~50% missingness in InteractionPartner and InteractionStrength
   if(n > 0){
     na_idx <- sample(1:n, size = round(0.5 * n))
-    df$InteractionPartner[na_idx] <- "NA"
+    df$InteractionPartner[na_idx] <- NA
     na_idx2 <- sample(1:n, size = round(0.5 * n))
-    df$InteractionStrength[na_idx2] <- "NA"
+    df$InteractionStrength[na_idx2] <- NA
   }
   df
 }))
@@ -170,9 +170,9 @@ disease_associations <- do.call(rbind, lapply(gene_ids, function(id) {
   # Introduce ~50% missingness in Disease and AssociationScore
   if(n > 0){
     na_idx <- sample(1:n, size = round(0.5 * n))
-    df$Disease[na_idx] <- "NA"
+    df$Disease[na_idx] <- NA
     na_idx2 <- sample(1:n, size = round(0.5 * n))
-    df$AssociationScore[na_idx2] <- "NA"
+    df$AssociationScore[na_idx2] <- NA
   }
   df
 }))
@@ -190,7 +190,7 @@ functional_annotations <- do.call(rbind, lapply(gene_ids, function(id) {
   # Introduce ~50% missingness in Annotation
   if(n > 0){
     na_idx <- sample(1:n, size = round(0.5 * n))
-    df$Annotation[na_idx] <- "NA"
+    df$Annotation[na_idx] <- NA
   }
   df
 }))
