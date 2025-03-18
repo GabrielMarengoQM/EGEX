@@ -23,14 +23,18 @@ ui <- page_navbar(
   nav_panel("Explore Data",
             sidebarLayout(
               sidebarPanel(
+                width = 3,
                 div(class = "overflow-auto", style = "max-height: 80vh;",
                     accordion(
                       accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui"), value = "saved"),
                       accordion_panel("Current Filters", uiOutput("current_filters"), value = "current"),
                       accordion_panel("Filter Controls",
                                       tagList(
-                                        actionButton("clear_filters", "Clear Current Filters"),
-                                        br(), br(),
+                                        fluidRow(
+                                          column(6, actionButton("clear_filters", "Clear Filters", width = "100%")),
+                                          column(6, actionButton("save_gene_list", "Save Gene List", width = "100%"))
+                                        ),
+                                        br(),
                                         lapply(individual_tables, function(tbl) {
                                           tagList(
                                             h4(tbl),
@@ -46,9 +50,9 @@ ui <- page_navbar(
                 )
               ),
               mainPanel(
+                width = 9,
                 tabsetPanel(
                   tabPanel("Table",
-                           actionButton("save_gene_list", "Save Gene List", width = "25%"),
                            reactableOutput("aggregated_table")
                   ),
                   tabPanel("Plot",
@@ -147,10 +151,10 @@ server <- function(input, output, session) {
           applyId <- paste0("apply_", gsub(" ", "_", name))
           removeId <- paste0("remove_", gsub(" ", "_", name))
           fluidRow(
-            column(4, strong(name)),
+            column(3, strong(name)),
             column(3, paste("Genes:", count)),
             column(3, actionButton(applyId, "Apply Filters", class = "btn-sm")),
-            column(2, actionButton(removeId, "Remove", class = "btn-danger btn-sm"))
+            column(3, actionButton(removeId, "Remove", class = "btn-danger btn-sm"))
           )
         })
       )
