@@ -16,8 +16,7 @@ saved_gene_lists <- reactiveValues(data = list())
 
 ui <- page_navbar(
   title = "EGEx",
-  # tags$img(src = "QMUL-logo.jpg",
-  #          style = "height: 5%; position: absolute; right: 10px; top: 0;"),
+  # tags$img(src = "QMUL-logo.jpg", style = "height: 5%; position: absolute; right: 10px; top: 0;"),
   padding = "0.4rem",
   theme = bs_theme(bootswatch = "cosmo"),
   nav_panel("Explore Data",
@@ -237,6 +236,7 @@ server <- function(input, output, session) {
     unique(vals[!is.na(vals)])
   }
 
+  # For non-numeric filters, include "All" and "Has no data" options.
   lapply(individual_tables, function(tbl) {
     output[[paste0("filters_", tbl)]] <- renderUI({
       cols <- dbListFields(con, tbl)
@@ -257,7 +257,7 @@ server <- function(input, output, session) {
           vals <- get_choices(tbl, col)
           tagList(
             selectInput(input_id, label = col,
-                        choices = c("All", vals),
+                        choices = c("All", "Has no data", vals),
                         selected = "All", multiple = TRUE),
             checkboxInput(na_id, label = "Include NA", value = TRUE)
           )
@@ -267,7 +267,9 @@ server <- function(input, output, session) {
     })
   })
 
-  # Modified filtering function to incorporate NA toggle
+  # Modified filtering function:
+  # For non-numeric columns, if "Has no data" is selected, then add a condition
+  # that excludes any gene having any non-NA value for that column.
   filtered_data <- function(tbl) {
     reactive({
       cols <- dbListFields(con, tbl)
@@ -291,7 +293,10 @@ server <- function(input, output, session) {
         } else {
           input_val <- input[[input_id]]
           if (!is.null(input_val)) {
-            if(length(input_val) > 0 && !("All" %in% input_val)) {
+            if("Has no data" %in% input_val) {
+              # Only return rows for genes that have exclusively missing data in this column.
+              conditions <- c(conditions, sprintf("GeneID NOT IN (SELECT GeneID FROM %s WHERE %s IS NOT NULL)", tbl, col))
+            } else if(length(input_val) > 0 && !("All" %in% input_val)) {
               placeholders <- paste(rep("?", length(input_val)), collapse = ", ")
               if(include_na) {
                 conditions <- c(conditions, sprintf("(%s IN (%s) OR %s IS NULL)", col, placeholders, col))
@@ -589,7 +594,7 @@ server <- function(input, output, session) {
     xcol <- df_joint[[input$stack_x]]
     ycol <- df_joint[[input$stack_y]]
 
-    # Process the x variable
+    # Process the x variable.
     if(is.numeric(xcol)) {
       bin_size <- input$bin_size
       bins <- seq(min(xcol, na.rm = TRUE), max(xcol, na.rm = TRUE) + bin_size, by = bin_size)
@@ -606,7 +611,7 @@ server <- function(input, output, session) {
       }
     }
 
-    # Process the y variable (grouping)
+    # Process the y variable (grouping).
     df_joint$group <- as.factor(ycol)
     if(input$stack_show_na_y) {
       df_joint$group <- as.character(df_joint$group)
@@ -673,7 +678,7 @@ server <- function(input, output, session) {
     updateSelectInput(session, "stack_gene_list", choices = choices, selected = "Current List")
   })
 
-  # Reset filters including NA toggles.
+  # Reset filters including NA toggles to TRUE.
   observeEvent(input$clear_filters, {
     for(tbl in individual_tables) {
       cols <- dbListFields(con, tbl)
