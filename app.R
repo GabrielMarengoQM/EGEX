@@ -7,6 +7,7 @@ library(plotly)
 library(dplyr)
 library(arrow)
 library(zip)
+library(UpSetR)  # new library for UpSet plots
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
@@ -16,7 +17,6 @@ saved_gene_lists <- reactiveValues(data = list())
 
 ui <- page_navbar(
   title = "EGEx",
-  # If you want to add a logo, ensure QMUL-logo.jpg is in the www folder and uncomment below:
   # tags$img(src = "QMUL-logo.jpg", style = "height: 5%; position: absolute; right: 10px; top: 0;"),
   padding = "0.4rem",
   theme = bs_theme(bootswatch = "cosmo"),
@@ -31,24 +31,24 @@ ui <- page_navbar(
                       accordion_panel("Plot Options",
                                       tagList(
                                         selectInput("plot_type", "Select Plot Type:",
-                                                    choices = c("Bar Chart", "Violin Plot", "Scatter Plot", "Stacked Bar Chart")),
+                                                    choices = c("Bar Chart/Histogram", "Violin/Box Plot", "Scatter Plot", "Stacked Bar Chart", "UpSet Plot")),
                                         # Bar Chart controls
                                         conditionalPanel(
-                                          condition = "input.plot_type == 'Bar Chart'",
-                                          selectInput("bar_table", "Select table for Bar Chart:",
+                                          condition = "input.plot_type == 'Bar Chart/Histogram'",
+                                          selectInput("bar_table", "Select table for Bar Chart/Histogram:",
                                                       choices = individual_tables, selected = individual_tables[1]),
                                           selectInput("bar_col", "Select column:", choices = NULL),
+                                          uiOutput("bar_bin_size_ui"),
                                           checkboxInput("bar_show_na", "Show missing values", value = FALSE),
                                           radioButtons("bar_y_type", "Y-axis type:",
-                                                       choices = c("Count", "Percentage"),
-                                                       selected = "Count", inline = TRUE),
+                                                       choices = c("number of genes", "percentage of genes"),
+                                                       selected = "number of genes", inline = TRUE),
                                           selectInput("bar_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
                                         ),
-                                        # Violin Plot controls
+                                        # Violin/Box Plot controls
                                         conditionalPanel(
-                                          condition = "input.plot_type == 'Violin Plot'",
-                                          selectInput("violin_table", "Select table for Violin Plot:",
-                                                      choices = individual_tables, selected = individual_tables[1]),
+                                          condition = "input.plot_type == 'Violin/Box Plot'",
+                                          uiOutput("violin_table_ui"),
                                           selectInput("violin_col", "Select numeric column:", choices = NULL),
                                           checkboxInput("violin_show_points", "Show all points", value = FALSE),
                                           selectInput("violin_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
@@ -70,16 +70,20 @@ ui <- page_navbar(
                                           selectInput("stack_table_x", "Select table for X:",
                                                       choices = individual_tables, selected = individual_tables[1]),
                                           selectInput("stack_x", "Select X column:", choices = NULL),
-                                          selectInput("stack_table_y", "Select table for Y:",
-                                                      choices = individual_tables, selected = individual_tables[1]),
+                                          uiOutput("stack_bin_size_ui"),
+                                          uiOutput("stack_table_y_ui"),
                                           selectInput("stack_y", "Select Y column (factor):", choices = NULL),
-                                          numericInput("bin_size", "Bin Size (for numeric X):", value = 10, min = 0.1, step = 0.1),
                                           radioButtons("stack_y_type", "Y-axis display:",
-                                                       choices = c("Count", "Percentage"),
-                                                       selected = "Percentage", inline = TRUE),
+                                                       choices = c("number of genes", "percentage of genes"),
+                                                       selected = "percentage of genes", inline = TRUE),
                                           checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
                                           checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
                                           selectInput("stack_gene_list", "Select Gene List:", choices = NULL, selected = "Current List")
+                                        ),
+                                        # UpSet Plot controls: select which gene lists to include
+                                        conditionalPanel(
+                                          condition = "input.plot_type == 'UpSet Plot'",
+                                          selectInput("upset_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
                                         )
                                       ),
                                       value = "plot_options"
@@ -108,7 +112,7 @@ ui <- page_navbar(
                 width = 9,
                 tabsetPanel(
                   tabPanel("Table", reactableOutput("aggregated_table")),
-                  tabPanel("Plot", plotlyOutput("plot_output"))
+                  tabPanel("Plot", uiOutput("plot_ui"))
                 )
               )
             )
@@ -116,6 +120,7 @@ ui <- page_navbar(
   nav_panel("Downloads",
             fluidRow(
               column(6,
+                     h4('Download EGEx DataBase'),
                      selectInput("db_file_type", "Select DB file type:",
                                  choices = c("csv", "tsv", "parquet"), selected = "csv"),
                      downloadButton("download_db", "Download DB")
@@ -123,9 +128,8 @@ ui <- page_navbar(
             ),
             fluidRow(
               column(6,
-                     selectInput("gene_list_file_type", "Select file type for saved gene lists:",
-                                 choices = c("CSV", "TSV"), selected = "CSV"),
-                     downloadButton("download_gene_lists", "Download Saved Gene Lists")
+                     h4('Download Gene Lists saved by User'),
+                     uiOutput("download_gene_lists_ui")
               )
             )
   )
@@ -154,7 +158,6 @@ server <- function(input, output, session) {
     }
   })
 
-  # Observers for applying and removing saved gene lists remain unchanged...
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -228,7 +231,6 @@ server <- function(input, output, session) {
     unique(vals[!is.na(vals)])
   }
 
-  # For non-numeric filters, include "All" and "Has no data" options.
   lapply(individual_tables, function(tbl) {
     output[[paste0("filters_", tbl)]] <- renderUI({
       cols <- dbListFields(con, tbl)
@@ -259,9 +261,6 @@ server <- function(input, output, session) {
     })
   })
 
-  # Modified filtering function:
-  # For non-numeric columns, if "Has no data" is selected then add a condition
-  # that excludes any gene having any non-NA value for that column.
   filtered_data <- function(tbl) {
     reactive({
       cols <- dbListFields(con, tbl)
@@ -286,7 +285,6 @@ server <- function(input, output, session) {
           input_val <- input[[input_id]]
           if (!is.null(input_val)) {
             if("Has no data" %in% input_val) {
-              # Only return rows for genes that have exclusively missing data in this column.
               conditions <- c(conditions, sprintf("GeneID NOT IN (SELECT GeneID FROM %s WHERE %s IS NOT NULL)", tbl, col))
             } else if(length(input_val) > 0 && !("All" %in% input_val)) {
               placeholders <- paste(rep("?", length(input_val)), collapse = ", ")
@@ -339,7 +337,30 @@ server <- function(input, output, session) {
     updateSelectInput(session, "bar_col", choices = c("", cols), selected = "")
   })
 
+  valid_violin_tables <- reactive({
+    valid <- sapply(individual_tables, function(tbl) {
+      cols <- dbListFields(con, tbl)
+      numeric_cols <- sapply(cols, function(col) {
+        sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+        is.numeric(sample_val)
+      })
+      any(numeric_cols)
+    })
+    individual_tables[valid]
+  })
+
+  output$violin_table_ui <- renderUI({
+    valid_tables <- valid_violin_tables()
+    if (length(valid_tables) == 0) {
+      return(HTML("<em>No tables with valid numeric columns available for Violin/Box Plot</em>"))
+    }
+    selectInput("violin_table", "Select table for Violin/Box Plot:",
+                choices = valid_tables,
+                selected = valid_tables[1])
+  })
+
   observeEvent(input$violin_table, {
+    req(input$violin_table)
     tbl <- input$violin_table
     cols <- dbListFields(con, tbl)
     numeric_cols <- sapply(cols, function(col) {
@@ -364,40 +385,124 @@ server <- function(input, output, session) {
     updateSelectInput(session, "stack_x", choices = c("", cols), selected = "")
   })
 
+  valid_stack_y_tables <- reactive({
+    valid <- sapply(individual_tables, function(tbl) {
+      cols <- dbListFields(con, tbl)
+      factor_cols <- sapply(cols, function(col) {
+        sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+        !is.numeric(sample_val)
+      })
+      any(factor_cols)
+    })
+    individual_tables[valid]
+  })
+
+  output$stack_table_y_ui <- renderUI({
+    valid_tables <- valid_stack_y_tables()
+    if (length(valid_tables) == 0) {
+      return(HTML("<em>No tables with valid factor columns available for Stacked Bar Chart Y‑axis</em>"))
+    }
+    selectInput("stack_table_y", "Select table for Y:",
+                choices = valid_tables,
+                selected = valid_tables[1])
+  })
+
   observeEvent(input$stack_table_y, {
+    req(input$stack_table_y)
     tbl <- input$stack_table_y
     cols <- dbListFields(con, tbl)
     factor_cols <- sapply(cols, function(col) {
       sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
       !is.numeric(sample_val)
     })
-    updateSelectInput(session, "stack_y", choices = c("", cols[factor_cols]), selected = "")
+    valid_factors <- cols[factor_cols]
+    if(length(valid_factors) == 0) {
+      updateSelectInput(session, "stack_y", choices = c(""))
+    } else {
+      updateSelectInput(session, "stack_y",
+                        choices = c("", valid_factors),
+                        selected = "")
+    }
   })
 
+  # Update gene list selectors for other plots and for UpSet plot
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
     updateSelectInput(session, "bar_gene_lists", choices = choices, selected = choices)
     updateSelectInput(session, "violin_gene_lists", choices = choices, selected = choices)
     updateSelectInput(session, "scatter_gene_lists", choices = choices, selected = "Current List")
     updateSelectInput(session, "stack_gene_list", choices = choices, selected = "Current List")
+    updateSelectInput(session, "upset_gene_lists", choices = choices, selected = choices)
+  })
+
+  output$bar_bin_size_ui <- renderUI({
+    req(input$bar_table, input$bar_col)
+    if(input$bar_col == "") return(NULL)
+    tbl <- input$bar_table
+    col <- input$bar_col
+    sample_val <- tryCatch({
+      dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+    }, error = function(e) NULL)
+    if(is.null(sample_val)) return(NULL)
+    if(is.numeric(sample_val)) {
+      vals <- dbGetQuery(con, sprintf("SELECT %s FROM %s WHERE %s IS NOT NULL", col, tbl, col))[[col]]
+      min_val <- min(vals, na.rm = TRUE)
+      max_val <- max(vals, na.rm = TRUE)
+      default_bin_size <- (max_val - min_val) / 50
+      numericInput("bar_bin_size", "Bin Size (for numeric X):",
+                   value = default_bin_size,
+                   min = default_bin_size / 10,
+                   step = default_bin_size / 10)
+    } else {
+      NULL
+    }
+  })
+
+  output$stack_bin_size_ui <- renderUI({
+    req(input$stack_table_x, input$stack_x)
+    if(input$stack_x == "") return(NULL)
+    tbl <- input$stack_table_x
+    col <- input$stack_x
+    sample_val <- tryCatch({
+      dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+    }, error = function(e) NULL)
+    if(is.null(sample_val)) return(NULL)
+    if(is.numeric(sample_val)) {
+      vals <- dbGetQuery(con, sprintf("SELECT %s FROM %s WHERE %s IS NOT NULL", col, tbl, col))[[col]]
+      min_val <- min(vals, na.rm = TRUE)
+      max_val <- max(vals, na.rm = TRUE)
+      default_bin_size <- (max_val - min_val) / 50
+      numericInput("stack_bin_size", "Bin Size (for numeric X):",
+                   value = default_bin_size,
+                   min = default_bin_size / 10,
+                   step = default_bin_size / 10)
+    } else {
+      NULL
+    }
   })
 
   noDataPlot <- function() {
     plot_ly() %>%
-      layout(title = "Select data to plot",
+      layout(title = "No data to plot",
              annotations = list(
-               list(text = "Select data to plot",
+               list(text = "No data to plot",
                     showarrow = FALSE,
                     x = 0.5, y = 0.5,
                     xref = "paper", yref = "paper")
              ))
   }
 
-  # Consolidated Plot Output:
+  output$plot_ui <- renderUI({
+    if (input$plot_type == "UpSet Plot") {
+      plotOutput("upset_plot")
+    } else {
+      plotlyOutput("plot_output")
+    }
+  })
+
   plot_obj <- reactive({
     req(input$plot_type)
-    if(input$plot_type == "Bar Chart") {
-      # Code from previous output$plot_bar:
+    if(input$plot_type == "Bar Chart/Histogram") {
       if (is.null(input$bar_table) || input$bar_table == "" ||
           is.null(input$bar_col) || input$bar_col == "" ||
           is.null(input$bar_gene_lists) || length(input$bar_gene_lists) == 0)
@@ -425,7 +530,7 @@ server <- function(input, output, session) {
         if(input$bar_show_na) {
           combined$value <- ifelse(is.na(combined$value), "Missing", combined$value)
         }
-        if(input$bar_y_type=="Percentage") {
+        if(input$bar_y_type=="percentage of genes") {
           counts <- combined %>%
             group_by(gene_list, value) %>%
             summarise(count = n_distinct(GeneID), .groups = "drop") %>%
@@ -444,9 +549,11 @@ server <- function(input, output, session) {
         missing_count <- sum(is.na(combined[[input$bar_col]]))
         p <- plot_ly()
         if(nrow(non_missing) > 0) {
+          bin_args <- if(!is.null(input$bar_bin_size)) list(size = input$bar_bin_size) else NULL
           p <- add_histogram(p, data = non_missing, x = ~get(input$bar_col),
                              color = ~gene_list,
-                             histnorm = ifelse(input$bar_y_type=="Percentage", "percent", ""))
+                             histnorm = ifelse(input$bar_y_type=="percentage of genes", "percent", ""),
+                             xbins = bin_args)
         }
         if(input$bar_show_na && missing_count > 0) {
           p <- add_trace(p, x = "Missing", y = missing_count, type = "bar", name = "Missing")
@@ -454,12 +561,12 @@ server <- function(input, output, session) {
       }
 
       p <- layout(p, barmode = "group",
-                  title = paste("Bar Chart of", input$bar_col),
+                  title = paste("Bar Chart/Histogram of", input$bar_col),
                   xaxis = list(title = input$bar_col),
-                  yaxis = list(title = ifelse(input$bar_y_type=="Percentage", "Percentage", "Count")))
+                  yaxis = list(title = ifelse(input$bar_y_type=="percentage of genes", "percentage of genes", "number of genes")))
       return(p)
 
-    } else if(input$plot_type == "Violin Plot") {
+    } else if(input$plot_type == "Violin/Box Plot") {
       if (is.null(input$violin_table) || input$violin_table == "" ||
           is.null(input$violin_col) || input$violin_col == "" ||
           is.null(input$violin_gene_lists) || length(input$violin_gene_lists) == 0)
@@ -494,7 +601,7 @@ server <- function(input, output, session) {
                    points = ifelse(input$violin_show_points, "all", "outliers"),
                    text = ~hover_text,
                    hoverinfo = "text")
-      p <- layout(p, title = paste("Violin Plot of", input$violin_col),
+      p <- layout(p, title = paste("Violin/Box Plot of", input$violin_col),
                   yaxis = list(title = input$violin_col))
       return(p)
 
@@ -557,7 +664,6 @@ server <- function(input, output, session) {
           is.null(input$stack_x) || input$stack_x == "" ||
           is.null(input$stack_table_y) || input$stack_table_y == "" ||
           is.null(input$stack_y) || input$stack_y == "" ||
-          is.null(input$bin_size) || is.na(input$bin_size) ||
           is.null(input$stack_gene_list) || input$stack_gene_list == "")
         return(noDataPlot())
 
@@ -584,9 +690,8 @@ server <- function(input, output, session) {
       xcol <- df_joint[[input$stack_x]]
       ycol <- df_joint[[input$stack_y]]
 
-      # Process x variable.
-      if(is.numeric(xcol)) {
-        bin_size <- input$bin_size
+      if (is.numeric(xcol)) {
+        bin_size <- if (!is.null(input$stack_bin_size)) input$stack_bin_size else ((max(xcol, na.rm = TRUE) - min(xcol, na.rm = TRUE)) / 50)
         bins <- seq(min(xcol, na.rm = TRUE), max(xcol, na.rm = TRUE) + bin_size, by = bin_size)
         df_joint$bin <- cut(xcol, breaks = bins, include.lowest = TRUE, right = FALSE)
         if(input$stack_show_na_x) {
@@ -601,7 +706,6 @@ server <- function(input, output, session) {
         }
       }
 
-      # Process y variable (grouping)
       df_joint$group <- as.factor(ycol)
       if(input$stack_show_na_y) {
         df_joint$group <- as.character(df_joint$group)
@@ -612,16 +716,16 @@ server <- function(input, output, session) {
         group_by(bin, group) %>%
         summarise(count = n(), .groups = "drop") %>%
         ungroup()
-      if(input$stack_y_type == "Percentage") {
+      if(input$stack_y_type == "percentage of genes") {
         summary_df <- summary_df %>%
           group_by(bin) %>%
           mutate(percentage = count / sum(count) * 100) %>%
           ungroup()
         y_val <- summary_df$percentage
-        y_title <- "Percentage"
+        y_title <- "percentage of genes"
       } else {
         y_val <- summary_df$count
-        y_title <- "Count"
+        y_title <- "number of genes"
       }
 
       p <- plot_ly(data = summary_df, x = ~bin, y = ~y_val, color = ~group, type = "bar") %>%
@@ -637,7 +741,45 @@ server <- function(input, output, session) {
     plot_obj()
   })
 
-  ### SAVE GENE LIST FUNCTIONALITY ###
+  # Reactive gene list sets for UpSet plot using the selected gene lists
+  gene_list_sets <- reactive({
+    available <- c("Current List", names(saved_gene_lists$data))
+    sel <- input$upset_gene_lists
+    if(is.null(sel) || length(sel)==0) sel <- available
+    sets <- list()
+    if("Current List" %in% sel)
+      sets[["Current List"]] <- intersected_gene_ids()
+    for(n in names(saved_gene_lists$data)) {
+      if(n %in% sel)
+        sets[[n]] <- saved_gene_lists$data[[n]]$genes
+    }
+    sets
+  })
+
+  output$upset_plot <- renderPlot({
+    req(input$plot_type == "UpSet Plot")
+    sets <- gene_list_sets()
+    if(length(sets) < 2 || all(sapply(sets, length) < 2)) {
+      plot.new()
+      text(0.5, 0.5, "Select two lists to show UpSet Plot.")
+      return()
+    }
+    m <- fromList(sets)
+    upset(m, order.by = "freq")
+  })
+
+  output$download_gene_lists_ui <- renderUI({
+    if(length(saved_gene_lists$data) == 0){
+      HTML("<em>Save gene lists to be able to download them</em>")
+    } else {
+      tagList(
+        selectInput("gene_list_file_type", "Select file type for saved gene lists:",
+                    choices = c("CSV", "TSV"), selected = "CSV"),
+        downloadButton("download_gene_lists", "Download Saved Gene Lists")
+      )
+    }
+  })
+
   observeEvent(input$save_gene_list, {
     showModal(modalDialog(
       title = "Save Gene List",
@@ -671,7 +813,6 @@ server <- function(input, output, session) {
     updateSelectInput(session, "stack_gene_list", choices = choices, selected = "Current List")
   })
 
-  # Reset filters including NA toggles to TRUE.
   observeEvent(input$clear_filters, {
     for(tbl in individual_tables) {
       cols <- dbListFields(con, tbl)
@@ -691,7 +832,6 @@ server <- function(input, output, session) {
     }
   })
 
-  ### DOWNLOAD HANDLERS ###
   output$download_db <- downloadHandler(
     filename = function() {
       paste0("EGEx_DB_", Sys.Date(), ".zip")
