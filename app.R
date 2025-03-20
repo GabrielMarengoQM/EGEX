@@ -16,6 +16,7 @@ saved_gene_lists <- reactiveValues(data = list())
 
 ui <- page_navbar(
   title = "EGEx",
+  # If you want to add a logo, ensure QMUL-logo.jpg is in the www folder and uncomment below:
   # tags$img(src = "QMUL-logo.jpg", style = "height: 5%; position: absolute; right: 10px; top: 0;"),
   padding = "0.4rem",
   theme = bs_theme(bootswatch = "cosmo"),
@@ -27,6 +28,62 @@ ui <- page_navbar(
                     accordion(
                       accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui"), value = "saved"),
                       accordion_panel("Current Filters", uiOutput("current_filters"), value = "current"),
+                      accordion_panel("Plot Options",
+                                      tagList(
+                                        selectInput("plot_type", "Select Plot Type:",
+                                                    choices = c("Bar Chart", "Violin Plot", "Scatter Plot", "Stacked Bar Chart")),
+                                        # Bar Chart controls
+                                        conditionalPanel(
+                                          condition = "input.plot_type == 'Bar Chart'",
+                                          selectInput("bar_table", "Select table for Bar Chart:",
+                                                      choices = individual_tables, selected = individual_tables[1]),
+                                          selectInput("bar_col", "Select column:", choices = NULL),
+                                          checkboxInput("bar_show_na", "Show missing values", value = FALSE),
+                                          radioButtons("bar_y_type", "Y-axis type:",
+                                                       choices = c("Count", "Percentage"),
+                                                       selected = "Count", inline = TRUE),
+                                          selectInput("bar_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                                        ),
+                                        # Violin Plot controls
+                                        conditionalPanel(
+                                          condition = "input.plot_type == 'Violin Plot'",
+                                          selectInput("violin_table", "Select table for Violin Plot:",
+                                                      choices = individual_tables, selected = individual_tables[1]),
+                                          selectInput("violin_col", "Select numeric column:", choices = NULL),
+                                          checkboxInput("violin_show_points", "Show all points", value = FALSE),
+                                          selectInput("violin_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                                        ),
+                                        # Scatter Plot controls
+                                        conditionalPanel(
+                                          condition = "input.plot_type == 'Scatter Plot'",
+                                          selectInput("scatter_table_x", "Select table for X:",
+                                                      choices = individual_tables, selected = individual_tables[1]),
+                                          selectInput("scatter_x", "Select X column:", choices = NULL),
+                                          selectInput("scatter_table_y", "Select table for Y:",
+                                                      choices = individual_tables, selected = individual_tables[1]),
+                                          selectInput("scatter_y", "Select Y column:", choices = NULL),
+                                          selectInput("scatter_gene_lists", "Select Gene Lists:", choices = NULL, selected = "Current List", multiple = TRUE)
+                                        ),
+                                        # Stacked Bar Chart controls
+                                        conditionalPanel(
+                                          condition = "input.plot_type == 'Stacked Bar Chart'",
+                                          selectInput("stack_table_x", "Select table for X:",
+                                                      choices = individual_tables, selected = individual_tables[1]),
+                                          selectInput("stack_x", "Select X column:", choices = NULL),
+                                          selectInput("stack_table_y", "Select table for Y:",
+                                                      choices = individual_tables, selected = individual_tables[1]),
+                                          selectInput("stack_y", "Select Y column (factor):", choices = NULL),
+                                          numericInput("bin_size", "Bin Size (for numeric X):", value = 10, min = 0.1, step = 0.1),
+                                          radioButtons("stack_y_type", "Y-axis display:",
+                                                       choices = c("Count", "Percentage"),
+                                                       selected = "Percentage", inline = TRUE),
+                                          checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
+                                          checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
+                                          selectInput("stack_gene_list", "Select Gene List:", choices = NULL, selected = "Current List")
+                                        )
+                                      ),
+                                      value = "plot_options"
+                      ),
                       accordion_panel("Filter Controls",
                                       tagList(
                                         fluidRow(
@@ -43,78 +100,15 @@ ui <- page_navbar(
                                       ),
                                       value = "controls"
                       ),
-                      open = "controls",
-                      multiple = TRUE
+                      open = "controls"
                     )
                 )
               ),
               mainPanel(
                 width = 9,
                 tabsetPanel(
-                  tabPanel("Table",
-                           reactableOutput("aggregated_table")
-                  ),
-                  tabPanel("Plot",
-                           tabsetPanel(
-                             tabPanel("Bar Chart",
-                                      selectInput("bar_table", "Select table for Bar Chart:",
-                                                  choices = individual_tables, selected = individual_tables[1]),
-                                      selectInput("bar_col", "Select column:",
-                                                  choices = NULL, selected = ""),
-                                      checkboxInput("bar_show_na", "Show missing values", value = FALSE),
-                                      radioButtons("bar_y_type", "Y-axis type:",
-                                                   choices = c("Count", "Percentage"),
-                                                   selected = "Count", inline = TRUE),
-                                      selectInput("bar_gene_lists", "Select Gene Lists:",
-                                                  choices = NULL, selected = NULL, multiple = TRUE),
-                                      plotlyOutput("plot_bar")
-                             ),
-                             tabPanel("Violin Plot",
-                                      selectInput("violin_table", "Select table for Violin Plot:",
-                                                  choices = individual_tables, selected = individual_tables[1]),
-                                      selectInput("violin_col", "Select numeric column:",
-                                                  choices = NULL, selected = ""),
-                                      checkboxInput("violin_show_points", "Show all points", value = FALSE),
-                                      selectInput("violin_gene_lists", "Select Gene Lists:",
-                                                  choices = NULL, selected = NULL, multiple = TRUE),
-                                      plotlyOutput("plot_violin")
-                             ),
-                             tabPanel("Scatter Plot",
-                                      selectInput("scatter_table_x", "Select table for X:",
-                                                  choices = individual_tables, selected = individual_tables[1]),
-                                      selectInput("scatter_x", "Select X column:",
-                                                  choices = NULL, selected = ""),
-                                      selectInput("scatter_table_y", "Select table for Y:",
-                                                  choices = individual_tables, selected = individual_tables[1]),
-                                      selectInput("scatter_y", "Select Y column:",
-                                                  choices = NULL, selected = ""),
-                                      selectInput("scatter_gene_lists", "Select Gene Lists:",
-                                                  choices = NULL, selected = "Current List", multiple = TRUE),
-                                      plotlyOutput("plot_scatter")
-                             ),
-                             tabPanel("Stacked Bar Chart",
-                                      selectInput("stack_table_x", "Select table for X:",
-                                                  choices = individual_tables, selected = individual_tables[1]),
-                                      selectInput("stack_x", "Select X column:",
-                                                  choices = NULL, selected = ""),
-                                      selectInput("stack_table_y", "Select table for Y:",
-                                                  choices = individual_tables, selected = individual_tables[1]),
-                                      selectInput("stack_y", "Select Y column (factor):",
-                                                  choices = NULL, selected = ""),
-                                      numericInput("bin_size", "Bin Size (for numeric X):",
-                                                   value = 10, min = 0.1, step = 0.1),
-                                      radioButtons("stack_y_type", "Y-axis display:",
-                                                   choices = c("Count", "Percentage"),
-                                                   selected = "Percentage", inline = TRUE),
-                                      # Two toggles: one for x and one for y missing values.
-                                      checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
-                                      checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
-                                      selectInput("stack_gene_list", "Select Gene List:",
-                                                  choices = NULL, selected = "Current List"),
-                                      plotlyOutput("plot_stack")
-                             )
-                           )
-                  )
+                  tabPanel("Table", reactableOutput("aggregated_table")),
+                  tabPanel("Plot", plotlyOutput("plot_output"))
                 )
               )
             )
@@ -160,7 +154,7 @@ server <- function(input, output, session) {
     }
   })
 
-  # Observer for Apply Filters buttons
+  # Observers for applying and removing saved gene lists remain unchanged...
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -183,8 +177,6 @@ server <- function(input, output, session) {
       })
     }
   })
-
-  # Observer for Remove buttons: remove the gene list.
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -268,7 +260,7 @@ server <- function(input, output, session) {
   })
 
   # Modified filtering function:
-  # For non-numeric columns, if "Has no data" is selected, then add a condition
+  # For non-numeric columns, if "Has no data" is selected then add a condition
   # that excludes any gene having any non-NA value for that column.
   filtered_data <- function(tbl) {
     reactive({
@@ -337,7 +329,9 @@ server <- function(input, output, session) {
     placeholders <- paste(rep("?", length(gene_ids)), collapse = ", ")
     sql <- paste("SELECT * FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = "")
     df <- dbGetQuery(con, sql, params = gene_ids)
-    reactable(df, searchable = TRUE, filterable = TRUE, pagination = TRUE)
+    reactable(df,
+              searchable = FALSE, filterable = TRUE, pagination = TRUE,
+              compact = TRUE, bordered = TRUE, striped = TRUE, showPageSizeOptions = TRUE)
   })
 
   observeEvent(input$bar_table, {
@@ -390,256 +384,257 @@ server <- function(input, output, session) {
 
   noDataPlot <- function() {
     plot_ly() %>%
-      layout(title = "No data to plot",
+      layout(title = "Select data to plot",
              annotations = list(
-               list(text = "No data to plot",
+               list(text = "Select data to plot",
                     showarrow = FALSE,
                     x = 0.5, y = 0.5,
                     xref = "paper", yref = "paper")
              ))
   }
 
-  ### BAR CHART OUTPUT ###
-  output$plot_bar <- renderPlotly({
-    if (is.null(input$bar_table) || input$bar_table == "" ||
-        is.null(input$bar_col) || input$bar_col == "" ||
-        is.null(input$bar_gene_lists) || length(input$bar_gene_lists) == 0)
-      return(noDataPlot())
+  # Consolidated Plot Output:
+  plot_obj <- reactive({
+    req(input$plot_type)
+    if(input$plot_type == "Bar Chart") {
+      # Code from previous output$plot_bar:
+      if (is.null(input$bar_table) || input$bar_table == "" ||
+          is.null(input$bar_col) || input$bar_col == "" ||
+          is.null(input$bar_gene_lists) || length(input$bar_gene_lists) == 0)
+        return(noDataPlot())
 
-    df <- filtered_data(input$bar_table)()
-    if (nrow(df) == 0) return(noDataPlot())
+      df <- filtered_data(input$bar_table)()
+      if (nrow(df) == 0) return(noDataPlot())
 
-    gene_ids <- intersected_gene_ids()
-    if (length(gene_ids) == 0) return(noDataPlot())
-    df <- df[df$GeneID %in% gene_ids, ]
-    if(nrow(df) == 0) return(noDataPlot())
+      gene_ids <- intersected_gene_ids()
+      if (length(gene_ids) == 0) return(noDataPlot())
+      df <- df[df$GeneID %in% gene_ids, ]
+      if(nrow(df) == 0) return(noDataPlot())
 
-    combined <- do.call(rbind, lapply(input$bar_gene_lists, function(listName) {
-      subset_genes <- if(listName == "Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
-      df_subset <- df[df$GeneID %in% subset_genes, , drop = FALSE]
-      if(nrow(df_subset)==0) return(NULL)
-      df_subset$gene_list <- listName
-      df_subset
-    }))
-    if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+      combined <- do.call(rbind, lapply(input$bar_gene_lists, function(listName) {
+        subset_genes <- if(listName == "Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
+        df_subset <- df[df$GeneID %in% subset_genes, , drop = FALSE]
+        if(nrow(df_subset)==0) return(NULL)
+        df_subset$gene_list <- listName
+        df_subset
+      }))
+      if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
 
-    if(!is.numeric(combined[[input$bar_col]])) {
-      combined$value <- combined[[input$bar_col]]
-      if(input$bar_show_na) {
-        combined$value <- ifelse(is.na(combined$value), "Missing", combined$value)
-      }
-      if(input$bar_y_type=="Percentage") {
-        counts <- combined %>%
-          group_by(gene_list, value) %>%
-          summarise(count = n_distinct(GeneID), .groups = "drop") %>%
-          group_by(gene_list) %>%
-          mutate(percentage = count/sum(count)*100) %>%
-          ungroup()
-        p <- plot_ly(data = counts, x = ~value, y = ~percentage, color = ~gene_list, type = "bar")
+      if(!is.numeric(combined[[input$bar_col]])) {
+        combined$value <- combined[[input$bar_col]]
+        if(input$bar_show_na) {
+          combined$value <- ifelse(is.na(combined$value), "Missing", combined$value)
+        }
+        if(input$bar_y_type=="Percentage") {
+          counts <- combined %>%
+            group_by(gene_list, value) %>%
+            summarise(count = n_distinct(GeneID), .groups = "drop") %>%
+            group_by(gene_list) %>%
+            mutate(percentage = count/sum(count)*100) %>%
+            ungroup()
+          p <- plot_ly(data = counts, x = ~value, y = ~percentage, color = ~gene_list, type = "bar")
+        } else {
+          counts <- combined %>%
+            group_by(gene_list, value) %>%
+            summarise(count = n_distinct(GeneID), .groups = "drop")
+          p <- plot_ly(data = counts, x = ~value, y = ~count, color = ~gene_list, type = "bar")
+        }
       } else {
-        counts <- combined %>%
-          group_by(gene_list, value) %>%
-          summarise(count = n_distinct(GeneID), .groups = "drop")
-        p <- plot_ly(data = counts, x = ~value, y = ~count, color = ~gene_list, type = "bar")
+        non_missing <- combined[!is.na(combined[[input$bar_col]]), ]
+        missing_count <- sum(is.na(combined[[input$bar_col]]))
+        p <- plot_ly()
+        if(nrow(non_missing) > 0) {
+          p <- add_histogram(p, data = non_missing, x = ~get(input$bar_col),
+                             color = ~gene_list,
+                             histnorm = ifelse(input$bar_y_type=="Percentage", "percent", ""))
+        }
+        if(input$bar_show_na && missing_count > 0) {
+          p <- add_trace(p, x = "Missing", y = missing_count, type = "bar", name = "Missing")
+        }
       }
-    } else {
-      non_missing <- combined[!is.na(combined[[input$bar_col]]), ]
-      missing_count <- sum(is.na(combined[[input$bar_col]]))
-      p <- plot_ly()
-      if(nrow(non_missing) > 0) {
-        p <- add_histogram(p, data = non_missing, x = ~get(input$bar_col),
-                           color = ~gene_list,
-                           histnorm = ifelse(input$bar_y_type=="Percentage", "percent", ""))
+
+      p <- layout(p, barmode = "group",
+                  title = paste("Bar Chart of", input$bar_col),
+                  xaxis = list(title = input$bar_col),
+                  yaxis = list(title = ifelse(input$bar_y_type=="Percentage", "Percentage", "Count")))
+      return(p)
+
+    } else if(input$plot_type == "Violin Plot") {
+      if (is.null(input$violin_table) || input$violin_table == "" ||
+          is.null(input$violin_col) || input$violin_col == "" ||
+          is.null(input$violin_gene_lists) || length(input$violin_gene_lists) == 0)
+        return(noDataPlot())
+
+      df <- filtered_data(input$violin_table)()
+      if (nrow(df) == 0) return(noDataPlot())
+
+      gene_ids <- intersected_gene_ids()
+      if (length(gene_ids) == 0) return(noDataPlot())
+      df <- df[df$GeneID %in% gene_ids, ]
+      if(nrow(df)==0) return(noDataPlot())
+
+      combined <- do.call(rbind, lapply(input$violin_gene_lists, function(listName) {
+        subset_genes <- if(listName=="Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
+        df_subset <- df[df$GeneID %in% subset_genes, , drop = FALSE]
+        if(nrow(df_subset)==0) return(NULL)
+        df_subset$gene_list <- listName
+        df_subset
+      }))
+      if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+
+      df_non_missing <- combined[!is.na(combined[[input$violin_col]]), ]
+      if(nrow(df_non_missing)==0) return(noDataPlot())
+
+      df_non_missing$hover_text <- paste("Gene:", df_non_missing$GeneID,
+                                         "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
+
+      p <- plot_ly(data = df_non_missing, y = ~get(input$violin_col), color = ~gene_list, type = "violin",
+                   box = list(visible = TRUE),
+                   meanline = list(visible = TRUE),
+                   points = ifelse(input$violin_show_points, "all", "outliers"),
+                   text = ~hover_text,
+                   hoverinfo = "text")
+      p <- layout(p, title = paste("Violin Plot of", input$violin_col),
+                  yaxis = list(title = input$violin_col))
+      return(p)
+
+    } else if(input$plot_type == "Scatter Plot") {
+      if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
+          is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
+          is.null(input$scatter_x) || input$scatter_x == "" ||
+          is.null(input$scatter_y) || input$scatter_y == "" ||
+          is.null(input$scatter_gene_lists) || length(input$scatter_gene_lists)==0)
+        return(noDataPlot())
+
+      gene_ids <- intersected_gene_ids()
+      if(length(gene_ids)==0) return(noDataPlot())
+
+      if (input$scatter_table_x == input$scatter_table_y) {
+        df_joint <- filtered_data(input$scatter_table_x)()
+        df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
+        if(nrow(df_joint)==0) return(noDataPlot())
+        if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
+          return(noDataPlot())
+      } else {
+        df_x <- filtered_data(input$scatter_table_x)()
+        df_y <- filtered_data(input$scatter_table_y)()
+        df_x <- df_x[df_x$GeneID %in% gene_ids, ]
+        df_y <- df_y[df_y$GeneID %in% gene_ids, ]
+        df_joint <- inner_join(df_x, df_y, by = "GeneID")
+        if(nrow(df_joint)==0) return(noDataPlot())
+        if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
+          return(noDataPlot())
       }
-      if(input$bar_show_na && missing_count > 0) {
-        p <- add_trace(p, x = "Missing", y = missing_count, type = "bar", name = "Missing")
+
+      df_joint <- df_joint[!is.na(df_joint[[input$scatter_x]]) & !is.na(df_joint[[input$scatter_y]]), ]
+
+      combined <- do.call(rbind, lapply(input$scatter_gene_lists, function(listName) {
+        subset_genes <- if(listName == "Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
+        df_subset <- df_joint[df_joint$GeneID %in% subset_genes, , drop = FALSE]
+        if(nrow(df_subset)==0) return(NULL)
+        df_subset$gene_list <- listName
+        df_subset
+      }))
+      if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+
+      combined$hover_text <- paste("GeneID:", combined$GeneID)
+
+      p <- plot_ly(data = combined,
+                   x = ~get(input$scatter_x),
+                   y = ~get(input$scatter_y),
+                   type = "scatter",
+                   mode = "markers",
+                   color = ~gene_list,
+                   text = ~hover_text,
+                   hoverinfo = "text+x+y") %>%
+        layout(title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
+               xaxis = list(title = input$scatter_x),
+               yaxis = list(title = input$scatter_y))
+      return(p)
+
+    } else if(input$plot_type == "Stacked Bar Chart") {
+      if (is.null(input$stack_table_x) || input$stack_table_x == "" ||
+          is.null(input$stack_x) || input$stack_x == "" ||
+          is.null(input$stack_table_y) || input$stack_table_y == "" ||
+          is.null(input$stack_y) || input$stack_y == "" ||
+          is.null(input$bin_size) || is.na(input$bin_size) ||
+          is.null(input$stack_gene_list) || input$stack_gene_list == "")
+        return(noDataPlot())
+
+      if(input$stack_table_x == input$stack_table_y) {
+        df_joint <- filtered_data(input$stack_table_x)()
+      } else {
+        df_x <- filtered_data(input$stack_table_x)()
+        df_y <- filtered_data(input$stack_table_y)()
+        df_joint <- inner_join(df_x, df_y, by = "GeneID")
       }
-    }
+      if(nrow(df_joint)==0) return(noDataPlot())
 
-    p <- layout(p, barmode = "group",
-                title = paste("Bar Chart of", input$bar_col),
-                xaxis = list(title = input$bar_col),
-                yaxis = list(title = ifelse(input$bar_y_type=="Percentage", "Percentage", "Count")))
-    p
-  })
-
-  ### VIOLIN PLOT OUTPUT ###
-  output$plot_violin <- renderPlotly({
-    if (is.null(input$violin_table) || input$violin_table == "" ||
-        is.null(input$violin_col) || input$violin_col == "" ||
-        is.null(input$violin_gene_lists) || length(input$violin_gene_lists) == 0)
-      return(noDataPlot())
-
-    df <- filtered_data(input$violin_table)()
-    if (nrow(df) == 0) return(noDataPlot())
-
-    gene_ids <- intersected_gene_ids()
-    if (length(gene_ids) == 0) return(noDataPlot())
-    df <- df[df$GeneID %in% gene_ids, ]
-    if(nrow(df)==0) return(noDataPlot())
-
-    combined <- do.call(rbind, lapply(input$violin_gene_lists, function(listName) {
-      subset_genes <- if(listName=="Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
-      df_subset <- df[df$GeneID %in% subset_genes, , drop = FALSE]
-      if(nrow(df_subset)==0) return(NULL)
-      df_subset$gene_list <- listName
-      df_subset
-    }))
-    if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
-
-    df_non_missing <- combined[!is.na(combined[[input$violin_col]]), ]
-    if(nrow(df_non_missing)==0) return(noDataPlot())
-
-    df_non_missing$hover_text <- paste("Gene:", df_non_missing$GeneID,
-                                       "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
-
-    p <- plot_ly(data = df_non_missing, y = ~get(input$violin_col), color = ~gene_list, type = "violin",
-                 box = list(visible = TRUE),
-                 meanline = list(visible = TRUE),
-                 points = ifelse(input$violin_show_points, "all", "outliers"),
-                 text = ~hover_text,
-                 hoverinfo = "text")
-
-    p <- layout(p, title = paste("Violin Plot of", input$violin_col),
-                yaxis = list(title = input$violin_col))
-    p
-  })
-
-  ### SCATTER PLOT OUTPUT ###
-  output$plot_scatter <- renderPlotly({
-    if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
-        is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
-        is.null(input$scatter_x) || input$scatter_x == "" ||
-        is.null(input$scatter_y) || input$scatter_y == "" ||
-        is.null(input$scatter_gene_lists) || length(input$scatter_gene_lists)==0)
-      return(noDataPlot())
-
-    gene_ids <- intersected_gene_ids()
-    if(length(gene_ids)==0) return(noDataPlot())
-
-    if (input$scatter_table_x == input$scatter_table_y) {
-      df_joint <- filtered_data(input$scatter_table_x)()
+      gene_ids <- intersected_gene_ids()
+      if(length(gene_ids)==0) return(noDataPlot())
       df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
       if(nrow(df_joint)==0) return(noDataPlot())
-      if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
-        return(noDataPlot())
-    } else {
-      df_x <- filtered_data(input$scatter_table_x)()
-      df_y <- filtered_data(input$scatter_table_y)()
-      df_x <- df_x[df_x$GeneID %in% gene_ids, ]
-      df_y <- df_y[df_y$GeneID %in% gene_ids, ]
-      df_joint <- inner_join(df_x, df_y, by = "GeneID")
-      if(nrow(df_joint)==0) return(noDataPlot())
-      if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
-        return(noDataPlot())
+
+      if(input$stack_gene_list != "Current List") {
+        subset_genes <- saved_gene_lists$data[[input$stack_gene_list]]$genes
+        df_joint <- df_joint[df_joint$GeneID %in% subset_genes, ]
+        if(nrow(df_joint)==0) return(noDataPlot())
+      }
+
+      xcol <- df_joint[[input$stack_x]]
+      ycol <- df_joint[[input$stack_y]]
+
+      # Process x variable.
+      if(is.numeric(xcol)) {
+        bin_size <- input$bin_size
+        bins <- seq(min(xcol, na.rm = TRUE), max(xcol, na.rm = TRUE) + bin_size, by = bin_size)
+        df_joint$bin <- cut(xcol, breaks = bins, include.lowest = TRUE, right = FALSE)
+        if(input$stack_show_na_x) {
+          df_joint$bin <- as.character(df_joint$bin)
+          df_joint$bin[is.na(xcol)] <- "Missing"
+        }
+      } else {
+        df_joint$bin <- as.factor(xcol)
+        if(input$stack_show_na_x) {
+          df_joint$bin <- as.character(df_joint$bin)
+          df_joint$bin[is.na(xcol)] <- "Missing"
+        }
+      }
+
+      # Process y variable (grouping)
+      df_joint$group <- as.factor(ycol)
+      if(input$stack_show_na_y) {
+        df_joint$group <- as.character(df_joint$group)
+        df_joint$group[is.na(ycol)] <- "Missing"
+      }
+
+      summary_df <- df_joint %>%
+        group_by(bin, group) %>%
+        summarise(count = n(), .groups = "drop") %>%
+        ungroup()
+      if(input$stack_y_type == "Percentage") {
+        summary_df <- summary_df %>%
+          group_by(bin) %>%
+          mutate(percentage = count / sum(count) * 100) %>%
+          ungroup()
+        y_val <- summary_df$percentage
+        y_title <- "Percentage"
+      } else {
+        y_val <- summary_df$count
+        y_title <- "Count"
+      }
+
+      p <- plot_ly(data = summary_df, x = ~bin, y = ~y_val, color = ~group, type = "bar") %>%
+        layout(title = paste("Stacked Bar Chart: % of", input$stack_y, "by", input$stack_x),
+               xaxis = list(title = input$stack_x),
+               yaxis = list(title = y_title),
+               barmode = "stack")
+      return(p)
     }
-
-    df_joint <- df_joint[!is.na(df_joint[[input$scatter_x]]) & !is.na(df_joint[[input$scatter_y]]), ]
-
-    combined <- do.call(rbind, lapply(input$scatter_gene_lists, function(listName) {
-      subset_genes <- if(listName == "Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
-      df_subset <- df_joint[df_joint$GeneID %in% subset_genes, , drop = FALSE]
-      if(nrow(df_subset)==0) return(NULL)
-      df_subset$gene_list <- listName
-      df_subset
-    }))
-    if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
-
-    combined$hover_text <- paste("GeneID:", combined$GeneID)
-
-    p <- plot_ly(data = combined,
-                 x = ~get(input$scatter_x),
-                 y = ~get(input$scatter_y),
-                 type = "scatter",
-                 mode = "markers",
-                 color = ~gene_list,
-                 text = ~hover_text,
-                 hoverinfo = "text+x+y") %>%
-      layout(title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
-             xaxis = list(title = input$scatter_x),
-             yaxis = list(title = input$scatter_y))
-    p
   })
 
-  ### STACKED BAR CHART OUTPUT ###
-  output$plot_stack <- renderPlotly({
-    if (is.null(input$stack_table_x) || input$stack_table_x == "" ||
-        is.null(input$stack_x) || input$stack_x == "" ||
-        is.null(input$stack_table_y) || input$stack_table_y == "" ||
-        is.null(input$stack_y) || input$stack_y == "" ||
-        is.null(input$bin_size) || is.na(input$bin_size) ||
-        is.null(input$stack_gene_list) || input$stack_gene_list == "")
-      return(noDataPlot())
-
-    if(input$stack_table_x == input$stack_table_y) {
-      df_joint <- filtered_data(input$stack_table_x)()
-    } else {
-      df_x <- filtered_data(input$stack_table_x)()
-      df_y <- filtered_data(input$stack_table_y)()
-      df_joint <- inner_join(df_x, df_y, by = "GeneID")
-    }
-    if(nrow(df_joint)==0) return(noDataPlot())
-
-    gene_ids <- intersected_gene_ids()
-    if(length(gene_ids)==0) return(noDataPlot())
-    df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
-    if(nrow(df_joint)==0) return(noDataPlot())
-
-    if(input$stack_gene_list != "Current List") {
-      subset_genes <- saved_gene_lists$data[[input$stack_gene_list]]$genes
-      df_joint <- df_joint[df_joint$GeneID %in% subset_genes, ]
-      if(nrow(df_joint)==0) return(noDataPlot())
-    }
-
-    xcol <- df_joint[[input$stack_x]]
-    ycol <- df_joint[[input$stack_y]]
-
-    # Process the x variable.
-    if(is.numeric(xcol)) {
-      bin_size <- input$bin_size
-      bins <- seq(min(xcol, na.rm = TRUE), max(xcol, na.rm = TRUE) + bin_size, by = bin_size)
-      df_joint$bin <- cut(xcol, breaks = bins, include.lowest = TRUE, right = FALSE)
-      if(input$stack_show_na_x) {
-        df_joint$bin <- as.character(df_joint$bin)
-        df_joint$bin[is.na(xcol)] <- "Missing"
-      }
-    } else {
-      df_joint$bin <- as.factor(xcol)
-      if(input$stack_show_na_x) {
-        df_joint$bin <- as.character(df_joint$bin)
-        df_joint$bin[is.na(xcol)] <- "Missing"
-      }
-    }
-
-    # Process the y variable (grouping).
-    df_joint$group <- as.factor(ycol)
-    if(input$stack_show_na_y) {
-      df_joint$group <- as.character(df_joint$group)
-      df_joint$group[is.na(ycol)] <- "Missing"
-    }
-
-    summary_df <- df_joint %>%
-      group_by(bin, group) %>%
-      summarise(count = n(), .groups = "drop") %>%
-      ungroup()
-    if(input$stack_y_type == "Percentage") {
-      summary_df <- summary_df %>%
-        group_by(bin) %>%
-        mutate(percentage = count / sum(count) * 100) %>%
-        ungroup()
-      y_val <- summary_df$percentage
-      y_title <- "Percentage"
-    } else {
-      y_val <- summary_df$count
-      y_title <- "Count"
-    }
-
-    p <- plot_ly(data = summary_df, x = ~bin, y = ~y_val, color = ~group, type = "bar") %>%
-      layout(title = paste("Stacked Bar Chart: % of", input$stack_y, "by", input$stack_x),
-             xaxis = list(title = input$stack_x),
-             yaxis = list(title = y_title),
-             barmode = "stack")
-    p
+  output$plot_output <- renderPlotly({
+    plot_obj()
   })
 
   ### SAVE GENE LIST FUNCTIONALITY ###
@@ -654,7 +649,6 @@ server <- function(input, output, session) {
       easyClose = TRUE
     ))
   })
-
   observeEvent(input$confirm_save, {
     req(input$gene_list_name)
     current_genes <- intersected_gene_ids()
@@ -671,7 +665,6 @@ server <- function(input, output, session) {
     )
     removeModal()
   })
-
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
     updateSelectInput(session, "scatter_gene_lists", choices = choices, selected = "Current List")
@@ -725,7 +718,6 @@ server <- function(input, output, session) {
       zip::zipr(zipfile = file, files = exported_files, recurse = FALSE)
     }
   )
-
   output$download_gene_lists <- downloadHandler(
     filename = function() {
       paste0("EGEx_Saved_Gene_Lists_", Sys.Date(), ".zip")
