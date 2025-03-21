@@ -1,7 +1,7 @@
 library(arrow)
 set.seed(123)
 
-num_genes <- 200
+num_genes <- 20000
 gene_ids <- sprintf("G%05d", 1:num_genes)
 
 ## WITH NA as a string for missing numeric values ----

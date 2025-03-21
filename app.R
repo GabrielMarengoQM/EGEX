@@ -2,12 +2,13 @@ library(shiny)
 library(bslib)
 library(duckdb)
 library(DBI)
-library(reactable)
+library(DT)
 library(plotly)
 library(dplyr)
 library(arrow)
 library(zip)
-library(UpSetR)  # new library for UpSet plots
+library(UpSetR)
+library(shinyWidgets)
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
@@ -24,77 +25,18 @@ ui <- page_navbar(
             sidebarLayout(
               sidebarPanel(
                 width = 3,
-                div(class = "overflow-auto", style = "max-height: 80vh;",
+                div(class = "overflow-auto", style = "max-height: 70vh;",
                     accordion(
                       accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui"), value = "saved"),
-                      accordion_panel("Current Filters", uiOutput("current_filters"), value = "current"),
-                      accordion_panel("Plot Options",
-                                      tagList(
-                                        selectInput("plot_type", "Select Plot Type:",
-                                                    choices = c("Bar Chart/Histogram", "Violin/Box Plot", "Scatter Plot", "Stacked Bar Chart", "UpSet Plot")),
-                                        # Bar Chart controls
-                                        conditionalPanel(
-                                          condition = "input.plot_type == 'Bar Chart/Histogram'",
-                                          selectInput("bar_table", "Select table for Bar Chart/Histogram:",
-                                                      choices = individual_tables, selected = individual_tables[1]),
-                                          selectInput("bar_col", "Select column:", choices = NULL),
-                                          uiOutput("bar_bin_size_ui"),
-                                          checkboxInput("bar_show_na", "Show missing values", value = FALSE),
-                                          radioButtons("bar_y_type", "Y-axis type:",
-                                                       choices = c("number of genes", "percentage of genes"),
-                                                       selected = "number of genes", inline = TRUE),
-                                          selectInput("bar_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
-                                        ),
-                                        # Violin/Box Plot controls
-                                        conditionalPanel(
-                                          condition = "input.plot_type == 'Violin/Box Plot'",
-                                          uiOutput("violin_table_ui"),
-                                          selectInput("violin_col", "Select numeric column:", choices = NULL),
-                                          checkboxInput("violin_show_points", "Show all points", value = FALSE),
-                                          selectInput("violin_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
-                                        ),
-                                        # Scatter Plot controls
-                                        conditionalPanel(
-                                          condition = "input.plot_type == 'Scatter Plot'",
-                                          selectInput("scatter_table_x", "Select table for X:",
-                                                      choices = individual_tables, selected = individual_tables[1]),
-                                          selectInput("scatter_x", "Select X column:", choices = NULL),
-                                          selectInput("scatter_table_y", "Select table for Y:",
-                                                      choices = individual_tables, selected = individual_tables[1]),
-                                          selectInput("scatter_y", "Select Y column:", choices = NULL),
-                                          selectInput("scatter_gene_lists", "Select Gene Lists:", choices = NULL, selected = "Current List", multiple = TRUE)
-                                        ),
-                                        # Stacked Bar Chart controls
-                                        conditionalPanel(
-                                          condition = "input.plot_type == 'Stacked Bar Chart'",
-                                          selectInput("stack_table_x", "Select table for X:",
-                                                      choices = individual_tables, selected = individual_tables[1]),
-                                          selectInput("stack_x", "Select X column:", choices = NULL),
-                                          uiOutput("stack_bin_size_ui"),
-                                          uiOutput("stack_table_y_ui"),
-                                          selectInput("stack_y", "Select Y column (factor):", choices = NULL),
-                                          radioButtons("stack_y_type", "Y-axis display:",
-                                                       choices = c("number of genes", "percentage of genes"),
-                                                       selected = "percentage of genes", inline = TRUE),
-                                          checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
-                                          checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
-                                          selectInput("stack_gene_list", "Select Gene List:", choices = NULL, selected = "Current List")
-                                        ),
-                                        # UpSet Plot controls: select which gene lists to include
-                                        conditionalPanel(
-                                          condition = "input.plot_type == 'UpSet Plot'",
-                                          selectInput("upset_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
-                                        )
-                                      ),
-                                      value = "plot_options"
-                      ),
                       accordion_panel("Filter Controls",
                                       tagList(
                                         fluidRow(
-                                          column(6, actionButton("clear_filters", "Clear Filters", width = "100%")),
-                                          column(6, actionButton("save_gene_list", "Save Gene List", width = "100%"))
+                                          column(4, actionButton("clear_filters", "Clear Filters", width = "100%")),
+                                          column(4, actionButton("save_gene_list", "Save Gene List", width = "100%")),
+                                          column(4, actionButton("show_filters", "Show Filters", width = "100%"))
                                         ),
                                         br(),
+                                        # The actual dynamic filter inputs for each table:
                                         lapply(individual_tables, function(tbl) {
                                           tagList(
                                             h4(tbl),
@@ -111,8 +53,75 @@ ui <- page_navbar(
               mainPanel(
                 width = 9,
                 tabsetPanel(
-                  tabPanel("Table", reactableOutput("aggregated_table")),
-                  tabPanel("Plot", uiOutput("plot_ui"))
+                  tabPanel("Table",
+                           div(class = "overflow-auto", style = "max-height: 70vh;",
+                               dataTableOutput("aggregated_table")
+                           )
+                  ),
+                  tabPanel("Plot",
+                           # Plot Options dropdown button above the plot:
+                           dropdownButton(
+                             label = "Plot Options", icon = icon("sliders"),
+                             circle = FALSE, status = "primary", width = "400px",
+                             tooltip = tooltipOptions(title = "Click to view plot options"),
+                             tagList(
+                               selectInput("plot_type", "Select Plot Type:",
+                                           choices = c("Bar Chart/Histogram", "Violin/Box Plot",
+                                                       "Scatter Plot", "Stacked Bar Chart", "UpSet Plot")),
+                               conditionalPanel(
+                                 condition = "input.plot_type == 'Bar Chart/Histogram'",
+                                 selectInput("bar_table", "Select table for Bar Chart/Histogram:",
+                                             choices = individual_tables, selected = individual_tables[1]),
+                                 selectInput("bar_col", "Select column:", choices = NULL),
+                                 uiOutput("bar_bin_size_ui"),
+                                 checkboxInput("bar_show_na", "Show missing values", value = FALSE),
+                                 radioButtons("bar_y_type", "Y-axis type:",
+                                              choices = c("number of genes", "percentage of genes"),
+                                              selected = "number of genes", inline = TRUE),
+                                 selectizeInput("bar_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                               ),
+                               conditionalPanel(
+                                 condition = "input.plot_type == 'Violin/Box Plot'",
+                                 uiOutput("violin_table_ui"),
+                                 selectInput("violin_col", "Select numeric column:", choices = NULL),
+                                 checkboxInput("violin_show_points", "Show all points", value = FALSE),
+                                 selectizeInput("violin_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                               ),
+                               conditionalPanel(
+                                 condition = "input.plot_type == 'Scatter Plot'",
+                                 selectInput("scatter_table_x", "Select table for X:",
+                                             choices = individual_tables, selected = individual_tables[1]),
+                                 selectInput("scatter_x", "Select X column:", choices = NULL),
+                                 selectInput("scatter_table_y", "Select table for Y:",
+                                             choices = individual_tables, selected = individual_tables[1]),
+                                 selectInput("scatter_y", "Select Y column:", choices = NULL),
+                                 selectizeInput("scatter_gene_lists", "Select Gene Lists:", choices = NULL,
+                                                selected = "Current List", multiple = TRUE)
+                               ),
+                               conditionalPanel(
+                                 condition = "input.plot_type == 'Stacked Bar Chart'",
+                                 selectInput("stack_table_x", "Select table for X:",
+                                             choices = individual_tables, selected = individual_tables[1]),
+                                 selectInput("stack_x", "Select X column:", choices = NULL),
+                                 uiOutput("stack_bin_size_ui"),
+                                 uiOutput("stack_table_y_ui"),
+                                 selectInput("stack_y", "Select Y column (factor):", choices = NULL),
+                                 radioButtons("stack_y_type", "Y-axis display:",
+                                              choices = c("number of genes", "percentage of genes"),
+                                              selected = "percentage of genes", inline = TRUE),
+                                 checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
+                                 checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
+                                 selectizeInput("stack_gene_list", "Select Gene List:", choices = NULL,
+                                                selected = "Current List")
+                               ),
+                               conditionalPanel(
+                                 condition = "input.plot_type == 'UpSet Plot'",
+                                 selectizeInput("upset_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                               )
+                             )
+                           ),
+                           uiOutput("plot_ui")
+                  )
                 )
               )
             )
@@ -180,6 +189,7 @@ server <- function(input, output, session) {
       })
     }
   })
+
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -193,7 +203,7 @@ server <- function(input, output, session) {
     }
   })
 
-  ### CURRENT FILTERS UI ###
+  ### CURRENT FILTERS UI (for modal) ###
   output$current_filters <- renderUI({
     all_inputs <- reactiveValuesToList(input)
     filter_keys <- names(all_inputs)[sapply(names(all_inputs), function(x) {
@@ -248,17 +258,33 @@ server <- function(input, output, session) {
             checkboxInput(na_id, label = "Include NA", value = TRUE)
           )
         } else {
-          vals <- get_choices(tbl, col)
           tagList(
-            selectInput(input_id, label = col,
-                        choices = c("All", "Has no data", vals),
-                        selected = "All", multiple = TRUE),
+            selectizeInput(input_id, label = col,
+                           choices = c("All", "Has no data"),
+                           selected = "All", multiple = TRUE),
             checkboxInput(na_id, label = "Include NA", value = TRUE)
           )
         }
       })
       do.call(tagList, ui_list)
     })
+  })
+
+  # Update selectizeInput choices for non-numeric filters using server-side processing
+  observe({
+    for(tbl in individual_tables) {
+      cols <- dbListFields(con, tbl)
+      for(col in cols) {
+        input_id <- paste(tbl, col, sep = "_")
+        sample_val <- tryCatch({
+          dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
+        }, error = function(e) NULL)
+        if (!is.null(sample_val) && !is.numeric(sample_val)) {
+          choices <- c("All", "Has no data", get_choices(tbl, col))
+          updateSelectizeInput(session, input_id, choices = choices, server = TRUE)
+        }
+      }
+    }
   })
 
   filtered_data <- function(tbl) {
@@ -319,17 +345,39 @@ server <- function(input, output, session) {
     Reduce(intersect, filtered_ids)
   })
 
-  output$aggregated_table <- renderReactable({
+  output$aggregated_table <- DT::renderDataTable({
     gene_ids <- intersected_gene_ids()
     if (length(gene_ids) == 0) {
-      return(reactable(data.frame(Message = "No matching gene IDs")))
+      return(DT::datatable(
+        data.frame(Message = "No matching gene IDs"),
+        options = list(dom = 't', paging = FALSE)
+      ))
     }
     placeholders <- paste(rep("?", length(gene_ids)), collapse = ", ")
     sql <- paste("SELECT * FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = "")
     df <- dbGetQuery(con, sql, params = gene_ids)
-    reactable(df,
-              searchable = FALSE, filterable = TRUE, pagination = TRUE,
-              compact = TRUE, bordered = TRUE, striped = TRUE, showPageSizeOptions = TRUE)
+    DT::datatable(
+      df,
+      escape = FALSE,
+      filter = "top",
+      class = "display cell-border stripe",
+      options = list(
+        paging = TRUE,
+        searching = TRUE,
+        autoWidth = TRUE,
+        scrollX = TRUE,
+        columnDefs = list(list(
+          targets = "_all",
+          render = JS("function(data, type, row, meta) {
+                        if (type === 'display' && typeof data === 'string' && data.length > 50) {
+                          return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 50) + '...</span>';
+                        } else {
+                          return data;
+                        }
+                      }")
+        ))
+      )
+    )
   })
 
   observeEvent(input$bar_table, {
@@ -425,14 +473,14 @@ server <- function(input, output, session) {
     }
   })
 
-  # Update gene list selectors for other plots and for UpSet plot
+  # Update gene list selectors for other plots and for UpSet plot using server-side processing
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
-    updateSelectInput(session, "bar_gene_lists", choices = choices, selected = choices)
-    updateSelectInput(session, "violin_gene_lists", choices = choices, selected = choices)
-    updateSelectInput(session, "scatter_gene_lists", choices = choices, selected = "Current List")
-    updateSelectInput(session, "stack_gene_list", choices = choices, selected = "Current List")
-    updateSelectInput(session, "upset_gene_lists", choices = choices, selected = choices)
+    updateSelectizeInput(session, "bar_gene_lists", choices = choices, selected = choices, server = TRUE)
+    updateSelectizeInput(session, "violin_gene_lists", choices = choices, selected = choices, server = TRUE)
+    updateSelectizeInput(session, "scatter_gene_lists", choices = choices, selected = "Current List", server = TRUE)
+    updateSelectizeInput(session, "stack_gene_list", choices = choices, selected = "Current List", server = TRUE)
+    updateSelectizeInput(session, "upset_gene_lists", choices = choices, selected = choices, server = TRUE)
   })
 
   output$bar_bin_size_ui <- renderUI({
@@ -728,6 +776,8 @@ server <- function(input, output, session) {
         y_title <- "number of genes"
       }
 
+      print(summary_df)
+
       p <- plot_ly(data = summary_df, x = ~bin, y = ~y_val, color = ~group, type = "bar") %>%
         layout(title = paste("Stacked Bar Chart: % of", input$stack_y, "by", input$stack_x),
                xaxis = list(title = input$stack_x),
@@ -791,6 +841,7 @@ server <- function(input, output, session) {
       easyClose = TRUE
     ))
   })
+
   observeEvent(input$confirm_save, {
     req(input$gene_list_name)
     current_genes <- intersected_gene_ids()
@@ -807,10 +858,22 @@ server <- function(input, output, session) {
     )
     removeModal()
   })
+
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
-    updateSelectInput(session, "scatter_gene_lists", choices = choices, selected = "Current List")
-    updateSelectInput(session, "stack_gene_list", choices = choices, selected = "Current List")
+    updateSelectizeInput(session, "scatter_gene_lists", choices = choices, selected = "Current List", server = TRUE)
+    updateSelectizeInput(session, "stack_gene_list", choices = choices, selected = "Current List", server = TRUE)
+  })
+
+  # Show Filters modal when button clicked
+  observeEvent(input$show_filters, {
+    showModal(modalDialog(
+      title = "Current Filters",
+      size = "l",
+      easyClose = TRUE,
+      footer = modalButton("Close"),
+      uiOutput("current_filters")
+    ))
   })
 
   observeEvent(input$clear_filters, {
@@ -825,7 +888,7 @@ server <- function(input, output, session) {
           default_val <- range(vals, na.rm = TRUE)
           updateSliderInput(session, input_id, value = default_val)
         } else {
-          updateSelectInput(session, input_id, selected = "All")
+          updateSelectizeInput(session, input_id, selected = "All")
         }
         updateCheckboxInput(session, na_id, value = TRUE)
       }
@@ -858,6 +921,7 @@ server <- function(input, output, session) {
       zip::zipr(zipfile = file, files = exported_files, recurse = FALSE)
     }
   )
+
   output$download_gene_lists <- downloadHandler(
     filename = function() {
       paste0("EGEx_Saved_Gene_Lists_", Sys.Date(), ".zip")
