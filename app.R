@@ -24,8 +24,8 @@ ui <- page_navbar(
   nav_panel("Explore Data",
             sidebarLayout(
               sidebarPanel(
-                width = 3,
-                div(class = "overflow-auto", style = "max-height: 70vh;",
+                width = 4,
+                div(class = "overflow-auto", style = "max-height: 85vh;",
                     accordion(
                       accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui"), value = "saved"),
                       accordion_panel("Filter Controls",
@@ -51,10 +51,10 @@ ui <- page_navbar(
                 )
               ),
               mainPanel(
-                width = 9,
+                width = 8,
                 tabsetPanel(
                   tabPanel("Table",
-                           div(class = "overflow-auto", style = "max-height: 70vh;",
+                           div(class = "overflow-auto", style = "max-height: 85vh;",
                                dataTableOutput("aggregated_table")
                            )
                   ),
@@ -333,7 +333,7 @@ server <- function(input, output, session) {
         sql <- paste(sql, "WHERE", paste(conditions, collapse = " AND "))
       }
       dbGetQuery(con, sql, params = params)
-    }) |> debounce(5)
+    }) |> debounce(500)
   }
 
   intersected_gene_ids <- reactive({
@@ -350,6 +350,7 @@ server <- function(input, output, session) {
     if (length(gene_ids) == 0) {
       return(DT::datatable(
         data.frame(Message = "No matching gene IDs"),
+        rownames= FALSE,
         options = list(dom = 't', paging = FALSE)
       ))
     }
@@ -360,6 +361,7 @@ server <- function(input, output, session) {
       df,
       escape = FALSE,
       filter = "top",
+      rownames= FALSE,
       class = "display cell-border stripe",
       options = list(
         paging = TRUE,
@@ -775,8 +777,6 @@ server <- function(input, output, session) {
         y_val <- summary_df$count
         y_title <- "number of genes"
       }
-
-      print(summary_df)
 
       p <- plot_ly(data = summary_df, x = ~bin, y = ~y_val, color = ~group, type = "bar") %>%
         layout(title = paste("Stacked Bar Chart: % of", input$stack_y, "by", input$stack_x),
