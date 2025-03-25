@@ -9,6 +9,9 @@ library(arrow)
 library(zip)
 library(UpSetR)
 library(shinyWidgets)
+library(shinycssloaders)
+# Optionally, to change button styling dynamically you could include shinyjs:
+# library(shinyjs)
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
@@ -18,7 +21,6 @@ saved_gene_lists <- reactiveValues(data = list())
 
 ui <- page_navbar(
   title = "EGEx",
-  # tags$img(src = "QMUL-logo.jpg", style = "height: 5%; position: absolute; right: 10px; top: 0;"),
   padding = "0.4rem",
   theme = bs_theme(bootswatch = "cosmo"),
   nav_panel("Explore Data",
@@ -30,13 +32,17 @@ ui <- page_navbar(
                       accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui"), value = "saved"),
                       accordion_panel("Filter Controls",
                                       tagList(
+                                        # Buttons row: Clear Filters and Show Filters
                                         fluidRow(
-                                          column(4, actionButton("clear_filters", "Clear Filters", width = "100%")),
-                                          column(4, actionButton("save_gene_list", "Save Gene List", width = "100%")),
-                                          column(4, actionButton("show_filters", "Show Filters", width = "100%"))
+                                          column(6, actionButton("clear_filters", "Clear Filters", width = "100%")),
+                                          column(6, actionButton("show_filters", "Show Filters", width = "100%"))
+                                        ),
+                                        # NEW: List Input button
+                                        fluidRow(
+                                          column(12, actionButton("list_input", "List Input", width = "100%"))
                                         ),
                                         br(),
-                                        # The actual dynamic filter inputs for each table:
+                                        # Dynamic filter inputs for each table (excluding GeneID)
                                         lapply(individual_tables, function(tbl) {
                                           tagList(
                                             h4(tbl),
@@ -54,12 +60,26 @@ ui <- page_navbar(
                 width = 8,
                 tabsetPanel(
                   tabPanel("Table",
-                           div(class = "overflow-auto", style = "max-height: 85vh;",
-                               dataTableOutput("aggregated_table")
-                           )
+                           # Table Options dropdown above aggregated table
+                           dropdownButton(
+                             label = "Table Options",
+                             icon = icon("table"),
+                             circle = FALSE,
+                             status = "primary",
+                             width = "300px",
+                             tooltip = tooltipOptions(title = "Table Options"),
+                             tagList(
+                               actionButton("save_gene_list", "Save Gene List"),
+                               selectInput("agg_columns", "Columns to display:",
+                                           choices = dbListFields(con, "aggregated"),
+                                           selected = dbListFields(con, "aggregated"),
+                                           multiple = TRUE)
+                             )
+                           ),
+                           # Aggregated table wrapped with a spinner
+                           withSpinner(card(DT::dataTableOutput("aggregated_table"), full_screen = TRUE, height = 625))
                   ),
                   tabPanel("Plot",
-                           # Plot Options dropdown button above the plot:
                            dropdownButton(
                              label = "Plot Options", icon = icon("sliders"),
                              circle = FALSE, status = "primary", width = "400px",
@@ -74,7 +94,7 @@ ui <- page_navbar(
                                              choices = individual_tables, selected = individual_tables[1]),
                                  selectInput("bar_col", "Select column:", choices = NULL),
                                  uiOutput("bar_bin_size_ui"),
-                                 checkboxInput("bar_show_na", "Show missing values", value = FALSE),
+                                 checkboxInput("bar_show_na", "Plot missing values", value = FALSE),
                                  radioButtons("bar_y_type", "Y-axis type:",
                                               choices = c("number of genes", "percentage of genes"),
                                               selected = "number of genes", inline = TRUE),
@@ -120,7 +140,13 @@ ui <- page_navbar(
                                )
                              )
                            ),
-                           uiOutput("plot_ui")
+                           # Updated card code for plot output; wrapped with spinner
+                           withSpinner(uiOutput("plot_ui")),
+                           # DT table and download button for plot data, wrapped with spinner
+                           withSpinner(card(DT::dataTableOutput("plot_data_table"), full_screen = TRUE)),
+                           fluidRow(
+                             column(3, downloadButton("download_plot_df", "Download Plot Data"))
+                           )
                   )
                 )
               )
@@ -145,6 +171,11 @@ ui <- page_navbar(
 )
 
 server <- function(input, output, session) {
+
+  ### Reactive gene mapping from the "genes" table (assumes columns GeneID and gene_symbol)
+  gene_mapping <- reactive({
+    dbReadTable(con, "genes")
+  })
 
   ### SAVED GENE LISTS UI ###
   output$saved_gene_lists_ui <- renderUI({
@@ -235,15 +266,9 @@ server <- function(input, output, session) {
   })
 
   ### HELPER FUNCTIONS & DYNAMIC FILTER UI ###
-  get_choices <- function(tbl, col) {
-    query <- sprintf("SELECT DISTINCT %s FROM %s", col, tbl)
-    vals <- dbGetQuery(con, query)[[col]]
-    unique(vals[!is.na(vals)])
-  }
-
   lapply(individual_tables, function(tbl) {
     output[[paste0("filters_", tbl)]] <- renderUI({
-      cols <- dbListFields(con, tbl)
+      cols <- setdiff(dbListFields(con, tbl), "GeneID")
       ui_list <- lapply(cols, function(col) {
         input_id <- paste(tbl, col, sep = "_")
         na_id <- paste(input_id, "na", sep = "_")
@@ -275,12 +300,13 @@ server <- function(input, output, session) {
     for(tbl in individual_tables) {
       cols <- dbListFields(con, tbl)
       for(col in cols) {
+        if(col == "GeneID") next
         input_id <- paste(tbl, col, sep = "_")
         sample_val <- tryCatch({
           dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
         }, error = function(e) NULL)
         if (!is.null(sample_val) && !is.numeric(sample_val)) {
-          choices <- c("All", "Has no data", get_choices(tbl, col))
+          choices <- c("All", "Has no data", unique(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]])[!is.na(unique(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]]))])
           updateSelectizeInput(session, input_id, choices = choices, server = TRUE)
         }
       }
@@ -293,6 +319,7 @@ server <- function(input, output, session) {
       conditions <- c()
       params <- list()
       for (col in cols) {
+        if(col == "GeneID") next
         input_id <- paste(tbl, col, sep = "_")
         na_id <- paste(input_id, "na", sep = "_")
         sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
@@ -354,8 +381,14 @@ server <- function(input, output, session) {
         options = list(dom = 't', paging = FALSE)
       ))
     }
+    # Use selected columns if provided
+    cols_to_show <- if (!is.null(input$agg_columns) && length(input$agg_columns) > 0) {
+      paste(input$agg_columns, collapse = ", ")
+    } else {
+      "*"
+    }
     placeholders <- paste(rep("?", length(gene_ids)), collapse = ", ")
-    sql <- paste("SELECT * FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = "")
+    sql <- paste("SELECT", cols_to_show, "FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = " ")
     df <- dbGetQuery(con, sql, params = gene_ids)
     DT::datatable(
       df,
@@ -367,12 +400,13 @@ server <- function(input, output, session) {
         paging = TRUE,
         searching = TRUE,
         autoWidth = TRUE,
+        responsive = TRUE,
         scrollX = TRUE,
         columnDefs = list(list(
           targets = "_all",
           render = JS("function(data, type, row, meta) {
-                        if (type === 'display' && typeof data === 'string' && data.length > 50) {
-                          return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 50) + '...</span>';
+                        if (type === 'display' && typeof data === 'string' && data.length > 20) {
+                          return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 20) + '...</span>';
                         } else {
                           return data;
                         }
@@ -475,7 +509,6 @@ server <- function(input, output, session) {
     }
   })
 
-  # Update gene list selectors for other plots and for UpSet plot using server-side processing
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
     updateSelectizeInput(session, "bar_gene_lists", choices = choices, selected = choices, server = TRUE)
@@ -542,13 +575,8 @@ server <- function(input, output, session) {
              ))
   }
 
-  output$plot_ui <- renderUI({
-    if (input$plot_type == "UpSet Plot") {
-      plotOutput("upset_plot")
-    } else {
-      plotlyOutput("plot_output")
-    }
-  })
+  # Reactive value to store the data frame used for plotting
+  current_plot_df <- reactiveVal(NULL)
 
   plot_obj <- reactive({
     req(input$plot_type)
@@ -614,6 +642,8 @@ server <- function(input, output, session) {
                   title = paste("Bar Chart/Histogram of", input$bar_col),
                   xaxis = list(title = input$bar_col),
                   yaxis = list(title = ifelse(input$bar_y_type=="percentage of genes", "percentage of genes", "number of genes")))
+
+      current_plot_df(combined)
       return(p)
 
     } else if(input$plot_type == "Violin/Box Plot") {
@@ -642,7 +672,10 @@ server <- function(input, output, session) {
       df_non_missing <- combined[!is.na(combined[[input$violin_col]]), ]
       if(nrow(df_non_missing)==0) return(noDataPlot())
 
-      df_non_missing$hover_text <- paste("Gene:", df_non_missing$GeneID,
+      # Join with the actual gene mapping table to get gene_symbol
+      gene_map <- gene_mapping()
+      df_non_missing <- merge(df_non_missing, gene_map, by = "GeneID", all.x = TRUE)
+      df_non_missing$hover_text <- paste("Gene:", df_non_missing$gene_symbol,
                                          "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
 
       p <- plot_ly(data = df_non_missing, y = ~get(input$violin_col), color = ~gene_list, type = "violin",
@@ -653,6 +686,8 @@ server <- function(input, output, session) {
                    hoverinfo = "text")
       p <- layout(p, title = paste("Violin/Box Plot of", input$violin_col),
                   yaxis = list(title = input$violin_col))
+
+      current_plot_df(df_non_missing)
       return(p)
 
     } else if(input$plot_type == "Scatter Plot") {
@@ -694,7 +729,10 @@ server <- function(input, output, session) {
       }))
       if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
 
-      combined$hover_text <- paste("GeneID:", combined$GeneID)
+      # Join with the gene mapping table for gene_symbol
+      gene_map <- gene_mapping()
+      combined <- merge(combined, gene_map, by = "GeneID", all.x = TRUE)
+      combined$hover_text <- paste("Gene:", combined$gene_symbol)
 
       p <- plot_ly(data = combined,
                    x = ~get(input$scatter_x),
@@ -707,6 +745,8 @@ server <- function(input, output, session) {
         layout(title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
                xaxis = list(title = input$scatter_x),
                yaxis = list(title = input$scatter_y))
+
+      current_plot_df(combined)
       return(p)
 
     } else if(input$plot_type == "Stacked Bar Chart") {
@@ -783,7 +823,17 @@ server <- function(input, output, session) {
                xaxis = list(title = input$stack_x),
                yaxis = list(title = y_title),
                barmode = "stack")
+
+      current_plot_df(summary_df)
       return(p)
+    }
+  })
+
+  output$plot_ui <- renderUI({
+    if (input$plot_type == "UpSet Plot") {
+      withSpinner(plotOutput("upset_plot"))
+    } else {
+      withSpinner(card(plotlyOutput("plot_output"), full_screen = TRUE))
     }
   })
 
@@ -791,7 +841,33 @@ server <- function(input, output, session) {
     plot_obj()
   })
 
-  # Reactive gene list sets for UpSet plot using the selected gene lists
+  output$plot_data_table <- DT::renderDataTable({
+    if (input$plot_type == "UpSet Plot") {
+      DT::datatable(data.frame(Message = "Data table not available for UpSet Plot"), options = list(dom = 't'))
+    } else {
+      df <- current_plot_df()
+      if (is.null(df) || nrow(df) == 0) {
+        DT::datatable(data.frame(Message = "No data available for table"), options = list(dom = 't'))
+      } else {
+        DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE))
+      }
+    }
+  })
+
+  output$download_plot_df <- downloadHandler(
+    filename = function() {
+      paste0("plot_data_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      df <- current_plot_df()
+      if(!is.null(df) && nrow(df) > 0) {
+        write.csv(df, file, row.names = FALSE)
+      } else {
+        write.csv(data.frame(Message="No plot data available"), file, row.names = FALSE)
+      }
+    }
+  )
+
   gene_list_sets <- reactive({
     available <- c("Current List", names(saved_gene_lists$data))
     sel <- input$upset_gene_lists
@@ -865,7 +941,6 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "stack_gene_list", choices = choices, selected = "Current List", server = TRUE)
   })
 
-  # Show Filters modal when button clicked
   observeEvent(input$show_filters, {
     showModal(modalDialog(
       title = "Current Filters",
@@ -880,6 +955,7 @@ server <- function(input, output, session) {
     for(tbl in individual_tables) {
       cols <- dbListFields(con, tbl)
       for(col in cols) {
+        if(col == "GeneID") next
         input_id <- paste(tbl, col, sep = "_")
         na_id <- paste(input_id, "na", sep = "_")
         sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
@@ -894,6 +970,101 @@ server <- function(input, output, session) {
       }
     }
   })
+
+  ## --- NEW: LIST INPUT MODAL LOGIC ---
+  observeEvent(input$list_input, {
+    showModal(modalDialog(
+      title = "List Input Filter",
+      fluidPage(
+        fluidRow(
+          column(6,
+                 selectInput("list_input_table", "Select Table:",
+                             choices = individual_tables, selected = individual_tables[1])
+          ),
+          column(6,
+                 uiOutput("list_input_column_ui")
+          )
+        ),
+        fluidRow(
+          column(12,
+                 textInput("list_input_text", "Enter list:", value = "")
+          )
+        ),
+        fluidRow(
+          column(12,
+                 selectInput("list_input_separator", "Select Separator:",
+                             choices = c("Semicolon (;)" = ";",
+                                         "Comma (,)" = ",",
+                                         "Whitespace" = " ",
+                                         "Pipe (|)" = "|"),
+                             selected = ";")
+          )
+        ),
+        fluidRow(
+          column(12,
+                 actionButton("apply_list_input", "Apply", class = "btn-primary")
+          )
+        ),
+        fluidRow(
+          column(12,
+                 htmlOutput("list_input_message")
+          )
+        )
+      ),
+      easyClose = TRUE,
+      footer = modalButton("Close")
+    ))
+  })
+
+  output$list_input_column_ui <- renderUI({
+    req(input$list_input_table)
+    tbl <- input$list_input_table
+    cols <- setdiff(dbListFields(con, tbl), "GeneID")
+    selectInput("list_input_column", "Select Column:", choices = cols, selected = cols[1])
+  })
+
+  observeEvent(input$apply_list_input, {
+    req(input$list_input_table, input$list_input_column, input$list_input_text, input$list_input_separator)
+    tbl <- input$list_input_table
+    col <- input$list_input_column
+    filter_input_id <- paste(tbl, col, sep = "_")
+
+    # Use the selected separator to split the text input (using fixed = TRUE)
+    entries <- unlist(strsplit(input$list_input_text, split = input$list_input_separator, fixed = TRUE))
+    entries <- trimws(entries)
+    entries <- entries[entries != ""]
+
+    # Get available distinct values from the database for that column
+    available_values <- as.character(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]])
+    available_values <- available_values[!is.na(available_values)]
+
+    # Determine valid and invalid entries
+    valid_entries <- entries[entries %in% available_values]
+    invalid_entries <- setdiff(entries, valid_entries)
+
+    # Update the selectizeInput filter with the valid entries
+    updateSelectizeInput(session, filter_input_id,
+                         choices = c("All", "Has no data", available_values),
+                         selected = valid_entries)
+
+    # Clear the text input after applying
+    updateTextInput(session, "list_input_text", value = "")
+
+    # Build a message that shows both valid and invalid entries as appropriate
+    message_parts <- c()
+    if (length(valid_entries) > 0) {
+      message_parts <- c(message_parts, paste("Matched terms:", paste(valid_entries, collapse = ", ")))
+    }
+    if (length(invalid_entries) > 0) {
+      message_parts <- c(message_parts, paste("The following entries did not match any available terms:",
+                                              paste(invalid_entries, collapse = ", ")))
+    }
+
+    output$list_input_message <- renderUI({
+      HTML(paste(message_parts, collapse = "<br>"))
+    })
+  })
+  ## --- END NEW LIST INPUT MODAL LOGIC ---
 
   output$download_db <- downloadHandler(
     filename = function() {
