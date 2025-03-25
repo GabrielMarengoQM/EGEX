@@ -19,6 +19,9 @@ all_tables <- dbListTables(con)
 individual_tables <- setdiff(all_tables, "aggregated")
 saved_gene_lists <- reactiveValues(data = list())
 
+# For the new Input Gene Lists modal, we track how many input groups are visible
+rv_gene_list_count <- reactiveVal(1)
+
 ui <- page_navbar(
   title = "EGEx",
   padding = "0.4rem",
@@ -37,9 +40,13 @@ ui <- page_navbar(
                                           column(6, actionButton("clear_filters", "Clear Filters", width = "100%")),
                                           column(6, actionButton("show_filters", "Show Filters", width = "100%"))
                                         ),
-                                        # NEW: List Input button
+                                        # Existing List Input button
                                         fluidRow(
                                           column(12, actionButton("list_input", "List Input", width = "100%"))
+                                        ),
+                                        # NEW: Input Gene Lists button
+                                        fluidRow(
+                                          column(12, actionButton("input_gene_lists", "Input Gene Lists", width = "100%"))
                                         ),
                                         br(),
                                         # Dynamic filter inputs for each table (excluding GeneID)
@@ -198,6 +205,8 @@ server <- function(input, output, session) {
     }
   })
 
+  # When a saved gene list's "Apply Filters" button is clicked,
+  # update the corresponding filters using updateSelectizeInput.
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -213,7 +222,7 @@ server <- function(input, output, session) {
             } else if(is.numeric(val)) {
               updateSliderInput(session, key, value = val)
             } else {
-              updateSelectInput(session, key, selected = val)
+              updateSelectizeInput(session, key, selected = val)
             }
           }
         }, ignoreInit = TRUE)
@@ -672,7 +681,7 @@ server <- function(input, output, session) {
       df_non_missing <- combined[!is.na(combined[[input$violin_col]]), ]
       if(nrow(df_non_missing)==0) return(noDataPlot())
 
-      # Join with the actual gene mapping table to get gene_symbol
+      # Join with the gene mapping table to get gene_symbol
       gene_map <- gene_mapping()
       df_non_missing <- merge(df_non_missing, gene_map, by = "GeneID", all.x = TRUE)
       df_non_missing$hover_text <- paste("Gene:", df_non_missing$gene_symbol,
@@ -971,7 +980,7 @@ server <- function(input, output, session) {
     }
   })
 
-  ## --- NEW: LIST INPUT MODAL LOGIC ---
+  ## --- NEW: LIST INPUT MODAL LOGIC (original "List Input" functionality) ---
   observeEvent(input$list_input, {
     showModal(modalDialog(
       title = "List Input Filter",
@@ -1029,12 +1038,12 @@ server <- function(input, output, session) {
     col <- input$list_input_column
     filter_input_id <- paste(tbl, col, sep = "_")
 
-    # Use the selected separator to split the text input (using fixed = TRUE)
+    # Use the selected separator to split the text input (fixed splitting)
     entries <- unlist(strsplit(input$list_input_text, split = input$list_input_separator, fixed = TRUE))
     entries <- trimws(entries)
     entries <- entries[entries != ""]
 
-    # Get available distinct values from the database for that column
+    # Get available distinct values for that column from the database
     available_values <- as.character(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]])
     available_values <- available_values[!is.na(available_values)]
 
@@ -1042,7 +1051,7 @@ server <- function(input, output, session) {
     valid_entries <- entries[entries %in% available_values]
     invalid_entries <- setdiff(entries, valid_entries)
 
-    # Update the selectizeInput filter with the valid entries
+    # Update the corresponding selectizeInput filter with valid entries
     updateSelectizeInput(session, filter_input_id,
                          choices = c("All", "Has no data", available_values),
                          selected = valid_entries)
@@ -1050,7 +1059,7 @@ server <- function(input, output, session) {
     # Clear the text input after applying
     updateTextInput(session, "list_input_text", value = "")
 
-    # Build a message that shows both valid and invalid entries as appropriate
+    # Build message showing matched and unmatched entries
     message_parts <- c()
     if (length(valid_entries) > 0) {
       message_parts <- c(message_parts, paste("Matched terms:", paste(valid_entries, collapse = ", ")))
@@ -1064,7 +1073,134 @@ server <- function(input, output, session) {
       HTML(paste(message_parts, collapse = "<br>"))
     })
   })
-  ## --- END NEW LIST INPUT MODAL LOGIC ---
+  ## --- END NEW: LIST INPUT MODAL LOGIC ---
+
+  ## --- NEW: INPUT GENE LISTS MODAL LOGIC ---
+  # When the "Input Gene Lists" button is clicked, open a modal with dynamic UI.
+  observeEvent(input$input_gene_lists, {
+    showModal(modalDialog(
+      title = "Input Gene Lists",
+      fluidPage(
+        # This UI output will display one or more gene list input groups.
+        uiOutput("gene_list_inputs_ui")
+      ),
+      easyClose = TRUE,
+      footer = modalButton("Close")
+    ))
+  })
+
+  # Render the dynamic gene list input groups.
+  output$gene_list_inputs_ui <- renderUI({
+    n <- rv_gene_list_count()
+    tagList(
+      lapply(seq_len(n), function(i) {
+        wellPanel(
+          fluidRow(
+            column(6,
+                   selectInput(paste0("gene_list_col_", i),
+                               "Select Column (from genes table):",
+                               choices = names(dbReadTable(con, "genes")),
+                               selected = "gene_symbol")
+            ),
+            column(6,
+                   textInput(paste0("gene_list_name_", i),
+                             "Gene List Name:", value = "")
+            )
+          ),
+          fluidRow(
+            column(8,
+                   textInput(paste0("gene_list_entries_", i),
+                             "Enter Gene List:", value = "")
+            ),
+            column(4,
+                   selectInput(paste0("gene_list_delim_", i),
+                               "Select Separator:",
+                               choices = c("Semicolon (;)" = ";",
+                                           "Comma (,)" = ",",
+                                           "Whitespace" = " ",
+                                           "Pipe (|)" = "|"),
+                               selected = ";")
+            )
+          ),
+          actionButton(paste0("save_gene_list_input_", i),
+                       "Save List", class = "btn-primary"),
+          htmlOutput(paste0("gene_list_msg_", i))
+        )
+      }),
+      # Button to add another gene list input group.
+      actionButton("add_gene_list_group", "+")
+    )
+  })
+
+  # When the + button is clicked, increment the count.
+  observeEvent(input$add_gene_list_group, {
+    rv_gene_list_count(rv_gene_list_count() + 1)
+  })
+
+  # Create dynamic observers for each gene list input group.
+  observe({
+    n <- rv_gene_list_count()
+    for(i in seq_len(n)) {
+      local({
+        idx <- i
+        observeEvent(input[[paste0("save_gene_list_input_", idx)]], {
+          req(input[[paste0("gene_list_col_", idx)]],
+              input[[paste0("gene_list_entries_", idx)]],
+              input[[paste0("gene_list_delim_", idx)]])
+          col_selected <- input[[paste0("gene_list_col_", idx)]]
+          list_name <- input[[paste0("gene_list_name_", idx)]]
+          list_entries <- input[[paste0("gene_list_entries_", idx)]]
+          delim <- input[[paste0("gene_list_delim_", idx)]]
+          # Split gene list entries using the chosen separator.
+          if(delim == " ") {
+            entries <- unlist(strsplit(list_entries, split = "\\s+"))
+          } else {
+            entries <- unlist(strsplit(list_entries, split = delim, fixed = TRUE))
+          }
+          entries <- trimws(entries)
+          entries <- entries[entries != ""]
+
+          # Get available distinct values from the genes table for the selected column.
+          available_values <- as.character(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM genes", col_selected))[[col_selected]])
+          available_values <- available_values[!is.na(available_values)]
+
+          valid_entries <- entries[entries %in% available_values]
+          invalid_entries <- setdiff(entries, valid_entries)
+
+          # For filtering, we need gene IDs. If the selected column is not "GeneID", map valid entries to gene IDs.
+          if(col_selected != "GeneID") {
+            mapping <- gene_mapping()
+            valid_gene_ids <- mapping$GeneID[mapping[[col_selected]] %in% valid_entries]
+          } else {
+            valid_gene_ids <- valid_entries
+          }
+
+          # Build message with matched and unmatched terms.
+          msg_parts <- c()
+          if (length(valid_entries) > 0) {
+            msg_parts <- c(msg_parts, paste("Matched terms:", paste(valid_entries, collapse = ", ")))
+          }
+          if (length(invalid_entries) > 0) {
+            msg_parts <- c(msg_parts, paste("The following entries did not match:", paste(invalid_entries, collapse = ", ")))
+          }
+          output[[paste0("gene_list_msg_", idx)]] <- renderUI({
+            HTML(paste(msg_parts, collapse = "<br>"))
+          })
+
+          # If no list name is provided, assign a default name.
+          if(list_name == "") {
+            list_name <- paste("Gene List", idx)
+          }
+          # Save this gene list into saved_gene_lists.
+          saved_gene_lists$data[[list_name]] <- list(
+            genes = valid_gene_ids,
+            filters = setNames(list(valid_gene_ids), paste("genes", col_selected, sep = "_"))
+          )
+        }, ignoreInit = TRUE)
+      })
+    }
+  })
+  ## --- END NEW: INPUT GENE LISTS MODAL LOGIC ---
 
   output$download_db <- downloadHandler(
     filename = function() {
