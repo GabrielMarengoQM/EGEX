@@ -19,6 +19,9 @@ all_tables <- dbListTables(con)
 individual_tables <- setdiff(all_tables, "aggregated")
 saved_gene_lists <- reactiveValues(data = list())
 
+# A reactiveVal to store the name of the currently expanded gene list
+currentExpandedGeneList <- reactiveVal(NULL)
+
 ui <- page_navbar(
   title = "EGEx",
   padding = "0.4rem",
@@ -29,15 +32,21 @@ ui <- page_navbar(
                 width = 4,
                 div(class = "overflow-auto", style = "max-height: 85vh;",
                     accordion(
-                      accordion_panel("Saved Gene Lists", uiOutput("saved_gene_lists_ui"), value = "saved"),
+                      # Saved Gene Lists accordion now includes a plus button at the top
+                      accordion_panel("Saved Gene Lists",
+                                      tagList(
+                                        actionButton("add_gene_list", "+", class = "btn btn-success"),
+                                        uiOutput("saved_gene_lists_ui")
+                                      ),
+                                      value = "saved"
+                      ),
                       accordion_panel("Filter Controls",
                                       tagList(
-                                        # Buttons row: Clear Filters and Show Filters
                                         fluidRow(
                                           column(6, actionButton("clear_filters", "Clear Filters", width = "100%")),
                                           column(6, actionButton("show_filters", "Show Filters", width = "100%"))
                                         ),
-                                        # List Input button for uploading a custom list (for any column)
+                                        # Only one list input remains for uploading a custom list
                                         fluidRow(
                                           column(12, actionButton("list_input", "List Input", width = "100%"))
                                         ),
@@ -60,7 +69,7 @@ ui <- page_navbar(
                 width = 8,
                 tabsetPanel(
                   tabPanel("Table",
-                           # Table Options dropdown above aggregated table
+                           # Removed the save button from here
                            dropdownButton(
                              label = "Table Options",
                              icon = icon("table"),
@@ -69,14 +78,12 @@ ui <- page_navbar(
                              width = "300px",
                              tooltip = tooltipOptions(title = "Table Options"),
                              tagList(
-                               actionButton("save_gene_list", "Save Gene List"),
                                selectInput("agg_columns", "Columns to display:",
                                            choices = dbListFields(con, "aggregated"),
                                            selected = dbListFields(con, "aggregated"),
                                            multiple = TRUE)
                              )
                            ),
-                           # Aggregated table wrapped with a spinner
                            withSpinner(card(DT::dataTableOutput("aggregated_table"), full_screen = TRUE, height = 625))
                   ),
                   tabPanel("Plot",
@@ -140,7 +147,6 @@ ui <- page_navbar(
                                )
                              )
                            ),
-                           # Plot output and data table wrapped with spinners
                            withSpinner(uiOutput("plot_ui")),
                            withSpinner(card(DT::dataTableOutput("plot_data_table"), full_screen = TRUE)),
                            fluidRow(
@@ -176,7 +182,7 @@ server <- function(input, output, session) {
     dbReadTable(con, "genes")
   })
 
-  ### SAVED GENE LISTS UI ###
+  ### SAVED GENE LISTS UI (each list now shows a single "Expand" button)
   output$saved_gene_lists_ui <- renderUI({
     if(length(saved_gene_lists$data) == 0) {
       HTML("<em>No saved gene lists.</em>")
@@ -184,58 +190,75 @@ server <- function(input, output, session) {
       tagList(
         lapply(names(saved_gene_lists$data), function(name) {
           count <- length(saved_gene_lists$data[[name]]$genes)
-          applyId <- paste0("apply_", gsub(" ", "_", name))
-          removeId <- paste0("remove_", gsub(" ", "_", name))
+          expandId <- paste0("expand_", gsub(" ", "_", name))
           fluidRow(
-            column(3, strong(name)),
+            column(6, strong(name)),
             column(3, paste("Genes:", count)),
-            column(3, actionButton(applyId, "Apply Filters", class = "btn-sm")),
-            column(3, actionButton(removeId, "Remove", class = "btn-danger btn-sm"))
+            column(3, actionButton(expandId, "Expand", class = "btn-sm"))
           )
         })
       )
     }
   })
 
-  # When a saved gene list's "Apply Filters" button is clicked,
-  # update the corresponding filters using updateSelectizeInput.
+  # When a saved gene list's "Expand" button is clicked, show a modal with details.
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
       local({
-        listName <- name
-        applyId <- paste0("apply_", gsub(" ", "_", name))
-        observeEvent(input[[applyId]], {
-          saved_filters <- saved_gene_lists$data[[listName]]$filters
-          for(key in names(saved_filters)) {
-            val <- saved_filters[[key]]
-            if (is.logical(val)) {
-              updateCheckboxInput(session, key, value = val)
-            } else if(is.numeric(val)) {
-              updateSliderInput(session, key, value = val)
-            } else {
-              updateSelectizeInput(session, key, selected = val)
-            }
+        expandId <- paste0("expand_", gsub(" ", "_", name))
+        observeEvent(input[[expandId]], {
+          currentExpandedGeneList(name)
+          # Get saved GeneIDs and query the genes table for their gene symbols
+          geneIDs <- saved_gene_lists$data[[name]]$genes
+          print(geneIDs)
+          symbols <- if(length(geneIDs) == 0) {
+            "None"
+          } else {
+            query <- sprintf("SELECT symbol FROM genes WHERE GeneID IN (%s)",
+                             paste(shQuote(geneIDs), collapse = ", "))
+            res <- dbGetQuery(con, query)
+            paste(res$symbol, collapse = ", ")
           }
+          showModal(modalDialog(
+            title = paste("Gene List:", name),
+            HTML(paste("<strong>Gene List (symbols):</strong><br>", symbols)),
+            footer = tagList(
+              actionButton("apply_modal", "Apply Filters"),
+              actionButton("remove_modal", "Remove")
+            ),
+            easyClose = TRUE
+          ))
         }, ignoreInit = TRUE)
       })
     }
   })
 
-  observe({
-    req(saved_gene_lists$data)
-    for(name in names(saved_gene_lists$data)) {
-      local({
-        listName <- name
-        removeId <- paste0("remove_", gsub(" ", "_", name))
-        observeEvent(input[[removeId]], {
-          saved_gene_lists$data[[listName]] <- NULL
-        }, ignoreInit = TRUE)
-      })
+  observeEvent(input$apply_modal, {
+    req(currentExpandedGeneList())
+    geneListName <- currentExpandedGeneList()
+    saved_filters <- saved_gene_lists$data[[geneListName]]$filters
+    for(key in names(saved_filters)) {
+      val <- saved_filters[[key]]
+      if (is.logical(val)) {
+        updateCheckboxInput(session, key, value = val)
+      } else if(is.numeric(val)) {
+        updateSliderInput(session, key, value = val)
+      } else {
+        updateSelectizeInput(session, key, selected = val)
+      }
     }
+    removeModal()
   })
 
-  ### CURRENT FILTERS UI (for modal) ###
+  observeEvent(input$remove_modal, {
+    req(currentExpandedGeneList())
+    geneListName <- currentExpandedGeneList()
+    saved_gene_lists$data[[geneListName]] <- NULL
+    removeModal()
+  })
+
+  ### CURRENT FILTERS UI (for modal)
   output$current_filters <- renderUI({
     all_inputs <- reactiveValuesToList(input)
     filter_keys <- names(all_inputs)[sapply(names(all_inputs), function(x) {
@@ -284,6 +307,7 @@ server <- function(input, output, session) {
             checkboxInput(na_id, label = "Include NA", value = TRUE)
           )
         } else {
+          # Initialize with "All"
           tagList(
             selectizeInput(input_id, label = col,
                            choices = c("All", "Has no data"),
@@ -308,7 +332,7 @@ server <- function(input, output, session) {
         }, error = function(e) NULL)
         if (!is.null(sample_val) && !is.numeric(sample_val)) {
           choices <- c("All", "Has no data", unique(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]])[!is.na(unique(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]]))])
-          updateSelectizeInput(session, input_id, choices = choices, server = TRUE)
+          updateSelectizeInput(session, input_id, choices = choices, selected = "All", server = TRUE)
         }
       }
     }
@@ -674,7 +698,7 @@ server <- function(input, output, session) {
 
       gene_map <- gene_mapping()
       df_non_missing <- merge(df_non_missing, gene_map, by = "GeneID", all.x = TRUE)
-      df_non_missing$hover_text <- paste("Gene:", df_non_missing$symbol,
+      df_non_missing$hover_text <- paste("Gene:", df_non_missing$gene_symbol,
                                          "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
 
       p <- plot_ly(data = df_non_missing, y = ~get(input$violin_col), color = ~gene_list, type = "violin",
@@ -730,7 +754,7 @@ server <- function(input, output, session) {
 
       gene_map <- gene_mapping()
       combined <- merge(combined, gene_map, by = "GeneID", all.x = TRUE)
-      combined$hover_text <- paste("Gene:", combined$symbol)
+      combined$hover_text <- paste("Gene:", combined$gene_symbol)
 
       p <- plot_ly(data = combined,
                    x = ~get(input$scatter_x),
@@ -904,7 +928,8 @@ server <- function(input, output, session) {
     }
   })
 
-  observeEvent(input$save_gene_list, {
+  # Use the plus button in Saved Gene Lists accordion to trigger the save modal.
+  observeEvent(input$add_gene_list, {
     showModal(modalDialog(
       title = "Save Gene List",
       textInput("gene_list_name", "Enter a name for this gene list:"),
@@ -1036,12 +1061,17 @@ server <- function(input, output, session) {
     available_values <- as.character(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]])
     available_values <- available_values[!is.na(available_values)]
 
-    valid_entries <- entries[entries %in% available_values]
-    invalid_entries <- setdiff(entries, valid_entries)
+    # For each entry, perform case-insensitive matching and return the matched value (preserving original case)
+    valid_entries <- sapply(entries, function(x) {
+      matches <- available_values[tolower(available_values) == tolower(x)]
+      if(length(matches) > 0) matches[1] else NA
+    })
+    valid_entries <- valid_entries[!is.na(valid_entries)]
+    invalid_entries <- entries[!(tolower(entries) %in% tolower(available_values))]
 
     updateSelectizeInput(session, filter_input_id,
                          choices = c("All", "Has no data", available_values),
-                         selected = valid_entries)
+                         selected = if(length(valid_entries)==0) "All" else valid_entries)
 
     updateTextInput(session, "list_input_text", value = "")
 
@@ -1058,7 +1088,6 @@ server <- function(input, output, session) {
       HTML(paste(message_parts, collapse = "<br>"))
     })
   })
-  ## --- END LIST INPUT MODAL LOGIC ---
 }
 
 shinyApp(ui, server)
