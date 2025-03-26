@@ -1,17 +1,15 @@
 library(shiny)
-library(bslib)
-library(duckdb)
-library(DBI)
-library(DT)
-library(plotly)
-library(dplyr)
-library(arrow)
-library(zip)
-library(UpSetR)
-library(shinyWidgets)
-library(shinycssloaders)
-# Optionally, to change button styling dynamically you could include shinyjs:
-# library(shinyjs)
+library(bslib) # additional UI
+library(duckdb) # duckDB DB
+library(DBI) # DB connection
+library(DT) # tables
+library(plotly) # plots
+library(dplyr) # piping and funcs
+library(arrow) # parquet files
+library(zip) # downloads
+library(UpSetR) # upset plot
+library(shinyWidgets) # additional UI
+library(shinycssloaders) # loaders
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
@@ -26,152 +24,318 @@ ui <- page_navbar(
   title = "EGEx",
   padding = "0.4rem",
   theme = bs_theme(bootswatch = "cosmo"),
-  nav_panel("Explore Data",
-            sidebarLayout(
-              sidebarPanel(
-                width = 4,
-                div(class = "overflow-auto", style = "max-height: 85vh;",
-                    accordion(
-                      # Saved Gene Lists accordion now includes a plus button at the top
-                      accordion_panel("Saved Gene Lists",
-                                      tagList(
-                                        actionButton("add_gene_list", "+", class = "btn btn-success"),
-                                        uiOutput("saved_gene_lists_ui")
-                                      ),
-                                      value = "saved"
-                      ),
-                      accordion_panel("Filter Controls",
-                                      tagList(
-                                        fluidRow(
-                                          column(6, actionButton("clear_filters", "Clear Filters", width = "100%")),
-                                          column(6, actionButton("show_filters", "Show Filters", width = "100%"))
-                                        ),
-                                        # Only one list input remains for uploading a custom list
-                                        fluidRow(
-                                          column(12, actionButton("list_input", "List Input", width = "100%"))
-                                        ),
-                                        br(),
-                                        # Dynamic filter inputs for each table (excluding GeneID)
-                                        lapply(individual_tables, function(tbl) {
-                                          tagList(
-                                            h4(tbl),
-                                            uiOutput(paste0("filters_", tbl))
-                                          )
-                                        })
-                                      ),
-                                      value = "controls"
-                      ),
-                      open = "controls"
-                    )
-                )
-              ),
-              mainPanel(
-                width = 8,
-                tabsetPanel(
-                  tabPanel("Table",
-                           # Removed the save button from here
-                           dropdownButton(
-                             label = "Table Options",
-                             icon = icon("table"),
-                             circle = FALSE,
-                             status = "primary",
-                             width = "300px",
-                             tooltip = tooltipOptions(title = "Table Options"),
-                             tagList(
-                               selectInput("agg_columns", "Columns to display:",
-                                           choices = dbListFields(con, "aggregated"),
-                                           selected = dbListFields(con, "aggregated"),
-                                           multiple = TRUE)
-                             )
-                           ),
-                           withSpinner(card(DT::dataTableOutput("aggregated_table"), full_screen = TRUE, height = 625))
-                  ),
-                  tabPanel("Plot",
-                           dropdownButton(
-                             label = "Plot Options", icon = icon("sliders"),
-                             circle = FALSE, status = "primary", width = "400px",
-                             tooltip = tooltipOptions(title = "Click to view plot options"),
-                             tagList(
-                               selectInput("plot_type", "Select Plot Type:",
-                                           choices = c("Bar Chart/Histogram", "Violin/Box Plot",
-                                                       "Scatter Plot", "Stacked Bar Chart", "UpSet Plot")),
-                               conditionalPanel(
-                                 condition = "input.plot_type == 'Bar Chart/Histogram'",
-                                 selectInput("bar_table", "Select table for Bar Chart/Histogram:",
-                                             choices = individual_tables, selected = individual_tables[1]),
-                                 selectInput("bar_col", "Select column:", choices = NULL),
-                                 uiOutput("bar_bin_size_ui"),
-                                 checkboxInput("bar_show_na", "Plot missing values", value = FALSE),
-                                 radioButtons("bar_y_type", "Y-axis type:",
-                                              choices = c("number of genes", "percentage of genes"),
-                                              selected = "number of genes", inline = TRUE),
-                                 selectizeInput("bar_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
-                               ),
-                               conditionalPanel(
-                                 condition = "input.plot_type == 'Violin/Box Plot'",
-                                 uiOutput("violin_table_ui"),
-                                 selectInput("violin_col", "Select numeric column:", choices = NULL),
-                                 checkboxInput("violin_show_points", "Show all points", value = FALSE),
-                                 selectizeInput("violin_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
-                               ),
-                               conditionalPanel(
-                                 condition = "input.plot_type == 'Scatter Plot'",
-                                 selectInput("scatter_table_x", "Select table for X:",
-                                             choices = individual_tables, selected = individual_tables[1]),
-                                 selectInput("scatter_x", "Select X column:", choices = NULL),
-                                 selectInput("scatter_table_y", "Select table for Y:",
-                                             choices = individual_tables, selected = individual_tables[1]),
-                                 selectInput("scatter_y", "Select Y column:", choices = NULL),
-                                 selectizeInput("scatter_gene_lists", "Select Gene Lists:", choices = NULL,
-                                                selected = "Current List", multiple = TRUE)
-                               ),
-                               conditionalPanel(
-                                 condition = "input.plot_type == 'Stacked Bar Chart'",
-                                 selectInput("stack_table_x", "Select table for X:",
-                                             choices = individual_tables, selected = individual_tables[1]),
-                                 selectInput("stack_x", "Select X column:", choices = NULL),
-                                 uiOutput("stack_bin_size_ui"),
-                                 uiOutput("stack_table_y_ui"),
-                                 selectInput("stack_y", "Select Y column (factor):", choices = NULL),
-                                 radioButtons("stack_y_type", "Y-axis display:",
-                                              choices = c("number of genes", "percentage of genes"),
-                                              selected = "percentage of genes", inline = TRUE),
-                                 checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
-                                 checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
-                                 selectizeInput("stack_gene_list", "Select Gene List:", choices = NULL,
-                                                selected = "Current List")
-                               ),
-                               conditionalPanel(
-                                 condition = "input.plot_type == 'UpSet Plot'",
-                                 selectizeInput("upset_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
-                               )
-                             )
-                           ),
-                           withSpinner(uiOutput("plot_ui")),
-                           withSpinner(card(DT::dataTableOutput("plot_data_table"), full_screen = TRUE)),
-                           fluidRow(
-                             column(3, downloadButton("download_plot_df", "Download Plot Data"))
-                           )
-                  )
-                )
-              )
-            )
+
+  # Include custom CSS styles in the document head
+  tags$head(
+    tags$style(HTML("
+      /* ================= Custom Sidebar CSS ================= */
+
+      /* Style the toggle button within the custom sidebar layout */
+      .custom-sidebar .bslib-sidebar-layout > .collapse-toggle {
+        padding: 15px 10px;              /* Add vertical and horizontal padding */
+        background-color: #007398;       /* Set the background color of the button */
+        position: absolute;              /* Position the button absolutely within its container */
+        border-radius: 0 5px 5px 0;        /* Round the right corners of the button */
+        writing-mode: vertical-rl;       /* Display text vertically from right to left */
+        text-orientation: mixed;         /* Allow mixed text orientation */
+        height: auto;                    /* Let the button adjust its height automatically */
+        z-index: 1000;                   /* Place the button on top of other elements */
+        display: flex;                   /* Use flex layout for inner content alignment */
+        align-items: center;             /* Vertically center the content */
+        justify-content: center;         /* Horizontally center the content */
+        transition: all 0.3s;            /* Smoothly animate property changes */
+        top: 20px;                       /* Position the button 50px from the top */
+        right: -40px;                   /* Position the button 40px outside the right edge */
+      }
+
+      /* Adjust the button's position when the sidebar is closed */
+      .custom-sidebar .bslib-sidebar-layout:not(.sidebar-open) > .collapse-toggle {
+        left: 0;                        /* Align the button to the left edge */
+        right: auto;                    /* Reset the right positioning */
+      }
+
+      /* Style the icon inside the toggle button */
+      .custom-sidebar .bslib-sidebar-layout > .collapse-toggle > .collapse-icon {
+        fill: white !important;         /* Force the icon color to white */
+        margin-bottom: 10px;             /* Add margin below the icon */
+      }
+
+      /* Add static text to the toggle button using the ::after pseudo-element */
+      .custom-sidebar .bslib-sidebar-layout > .collapse-toggle::after {
+        color: white;                   /* Set the text color to white */
+        font-size: 1.1em;               /* Slightly enlarge the font size */
+        text-transform: uppercase;      /* Transform text to uppercase */
+        letter-spacing: 1px;            /* Add spacing between letters */
+        margin-top: 10px;               /* Add margin above the text */
+      }
+
+      /* When the toggle button is expanded (sidebar open), display 'Close Sidebar' */
+      .custom-sidebar .bslib-sidebar-layout > .collapse-toggle[aria-expanded='true']::after {
+        content: 'Close Sidebar';
+      }
+
+      /* When the toggle button is collapsed (sidebar closed), display 'Sidebar' */
+      .custom-sidebar .bslib-sidebar-layout > .collapse-toggle[aria-expanded='false']::after {
+        content: 'Sidebar';
+      }
+
+      /* Adjust the main content area when the sidebar is open */
+      .custom-sidebar .bslib-sidebar-layout > .main {
+        margin-left: 300px;             /* Leave a left margin equal to the sidebar width */
+        transition: margin-left 0.3s;    /* Animate margin changes smoothly */
+        width: calc(100% - 300px);        /* Adjust the width to account for the sidebar */
+      }
+
+      /* When the sidebar is closed, let the main content take full width */
+      .custom-sidebar .bslib-sidebar-layout:not(.sidebar-open) > .main {
+        margin-left: 0;                 /* Remove the left margin */
+        width: 100%;                    /* Set full width */
+      }
+
+      /* Adjust the margin within the sidebar itself */
+      .custom-sidebar .bslib-sidebar-layout > .sidebar {
+        margin-left: 20px;              /* Add a left margin inside the sidebar */
+        padding-right: 0px;             /* Add desired right padding (adjust as needed) */
+      }
+
+      /* Add right padding to the container-fluid with these classes */
+      .container-fluid.html-fill-item.html-fill-container {
+        padding-right: 20px;            /* Add 20px of right padding */
+      }
+        /* Reduce extra padding to the sidebar container */
+     .custom-sidebar .sidebar-content.bslib-gap-spacing {
+      padding-top: 10px !important;
+      }
+      /* ================= End Custom Sidebar CSS ================= */
+      /* Add extra 32px padding to the main container */
+    .main.bslib-gap-spacing.html-fill-container {
+      padding-left: 32px;
+    }
+
+    "))
   ),
-  nav_panel("Downloads",
-            fluidRow(
-              column(6,
-                     h4('Download EGEx DataBase'),
-                     selectInput("db_file_type", "Select DB file type:",
-                                 choices = c("csv", "tsv", "parquet"), selected = "csv"),
-                     downloadButton("download_db", "Download DB")
-              )
-            ),
-            fluidRow(
-              column(6,
-                     h4('Download Gene Lists saved by User'),
-                     uiOutput("download_gene_lists_ui")
-              )
+
+  # ---------------- "Explore Data" Panel (with custom sidebar) ----------------
+    nav_panel(
+      "Explore Data",
+      div(
+        class = "custom-sidebar",
+      page_sidebar(
+        sidebar = sidebar(
+          width = "500px",             # Set the sidebar width
+          open = c("open"),            # Initially open the sidebar
+          div(
+            class = "overflow-auto",
+            style = "max-height: 85vh;",  # Allow the sidebar content to scroll if too tall
+            accordion(
+              # Accordion Panel: Saved Gene Lists
+              accordion_panel(
+                tagList(icon("list"), "Saved Gene Lists"),
+                tagList(
+                  actionButton("add_gene_list", "+ Save current gene list", class = "btn btn-success"),
+                  uiOutput("saved_gene_lists_ui")
+                ),
+                value = "saved"
+              ),
+              # Accordion Panel: Table/Plot Options with nested accordion
+              accordion_panel(
+                tagList(icon("columns"), "Table/Plot Options"),
+                tagList(
+                  accordion(
+                    # Nested Accordion: Table Options Panel
+                    accordion_panel(
+                      tagList(icon("table"), "Table Options"),
+                      tagList(
+                        selectInput(
+                          "agg_table",
+                          "Table to display:",
+                          choices = dbListTables(con),  # or use 'all_tables' if already defined
+                          selected = "aggregated"
+                        )
+                      ),
+                      value = "table_options"
+                    ),
+                    # Nested Accordion: Plot Options Panel
+                    accordion_panel(
+                      tagList(icon("sliders"), "Plot Options"),
+                      tagList(
+                        selectInput(
+                          "plot_type",
+                          "Select Plot Type:",
+                          choices = c(
+                            "Bar Chart/Histogram",
+                            "Violin/Box Plot",
+                            "Scatter Plot",
+                            "Stacked Bar Chart",
+                            "UpSet Plot"
+                          )
+                        ),
+                        conditionalPanel(
+                          condition = "input.plot_type == 'Bar Chart/Histogram'",
+                          selectInput(
+                            "bar_table",
+                            "Select table for Bar Chart/Histogram:",
+                            choices = individual_tables,
+                            selected = individual_tables[1]
+                          ),
+                          selectInput("bar_col", "Select column:", choices = NULL),
+                          uiOutput("bar_bin_size_ui"),
+                          checkboxInput("bar_show_na", "Plot missing values", value = FALSE),
+                          radioButtons(
+                            "bar_y_type",
+                            "Y-axis type:",
+                            choices = c("number of genes", "percentage of genes"),
+                            selected = "number of genes",
+                            inline = TRUE
+                          ),
+                          selectizeInput("bar_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                        ),
+                        conditionalPanel(
+                          condition = "input.plot_type == 'Violin/Box Plot'",
+                          uiOutput("violin_table_ui"),
+                          selectInput("violin_col", "Select numeric column:", choices = NULL),
+                          checkboxInput("violin_show_points", "Show all points", value = FALSE),
+                          selectizeInput("violin_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                        ),
+                        conditionalPanel(
+                          condition = "input.plot_type == 'Scatter Plot'",
+                          selectInput(
+                            "scatter_table_x",
+                            "Select table for X:",
+                            choices = individual_tables,
+                            selected = individual_tables[1]
+                          ),
+                          selectInput("scatter_x", "Select X column:", choices = NULL),
+                          selectInput(
+                            "scatter_table_y",
+                            "Select table for Y:",
+                            choices = individual_tables,
+                            selected = individual_tables[1]
+                          ),
+                          selectInput("scatter_y", "Select Y column:", choices = NULL),
+                          selectizeInput(
+                            "scatter_gene_lists",
+                            "Select Gene Lists:",
+                            choices = NULL,
+                            selected = "Current List",
+                            multiple = TRUE
+                          )
+                        ),
+                        conditionalPanel(
+                          condition = "input.plot_type == 'Stacked Bar Chart'",
+                          selectInput(
+                            "stack_table_x",
+                            "Select table for X:",
+                            choices = individual_tables,
+                            selected = individual_tables[1]
+                          ),
+                          selectInput("stack_x", "Select X column:", choices = NULL),
+                          uiOutput("stack_bin_size_ui"),
+                          uiOutput("stack_table_y_ui"),
+                          selectInput("stack_y", "Select Y column (factor):", choices = NULL),
+                          radioButtons(
+                            "stack_y_type",
+                            "Y-axis display:",
+                            choices = c("number of genes", "percentage of genes"),
+                            selected = "percentage of genes",
+                            inline = TRUE
+                          ),
+                          checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
+                          checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
+                          selectizeInput(
+                            "stack_gene_list",
+                            "Select Gene List:",
+                            choices = NULL,
+                            selected = "Current List"
+                          )
+                        ),
+                        conditionalPanel(
+                          condition = "input.plot_type == 'UpSet Plot'",
+                          selectizeInput(
+                            "upset_gene_lists",
+                            "Select Gene Lists:",
+                            choices = NULL,
+                            multiple = TRUE
+                          )
+                        )
+                      ),
+                      value = "plot_options"
+                    ),
+                    open = NULL  # Ensure that both nested panels are closed by default
+                  )
+                ),
+                value = "options"
+              ),
+              # Accordion Panel: Filter Controls
+              accordion_panel(
+                tagList(icon("filter"), "Filter Controls"),
+                tagList(
+                  fluidRow(
+                    column(6, actionButton("clear_filters", "Clear Filters", width = "100%")),
+                    column(6, actionButton("show_filters", "View Filters", width = "100%"))
+                  ),
+                  hr(),
+                  fluidRow(
+                    column(12, actionButton("list_input", "Input custom list", width = "100%"))
+                  ),
+                  hr(),
+                  # Dynamic filter inputs for each table (excluding GeneID)
+                  lapply(individual_tables, function(tbl) {
+                    tagList(
+                      h5(tbl),
+                      uiOutput(paste0("filters_", tbl)),
+                      hr()
+                    )
+                  })
+                ),
+                value = "controls"
+              ),
+              open = "controls"  # Set the default open top-level accordion panel
             )
+          )
+        ),
+        # Main content area with tabs
+        tabsetPanel(
+          tabPanel(
+            "Gene table",
+            withSpinner(card(
+              DT::dataTableOutput("aggregated_table"),
+              full_screen = TRUE, height = 625
+            )),
+            fluidRow(
+              column(3, downloadButton("download_agg_table", "Download Table"))
+            )
+          ),
+          tabPanel(
+            "Plot",
+            withSpinner(uiOutput("plot_ui")),
+            withSpinner(DT::dataTableOutput("plot_data_table")),
+            fluidRow(
+              column(3, downloadButton("download_plot_df", "Download Plot Data"))
+            )
+          )
+        )
+      )
+    )
+  ),
+
+  # ---------------- "Downloads" Panel (Not wrapped in custom-sidebar) ----------------
+  nav_panel(
+    "Downloads",
+    fluidRow(
+      column(6,
+             h4("Download EGEx DataBase"),
+             selectInput("db_file_type", "Select DB file type:",
+                         choices = c("csv", "tsv", "parquet"), selected = "csv"),
+             downloadButton("download_db", "Download DB")
+      )
+    ),
+    fluidRow(
+      column(6,
+             h4("Download Gene Lists saved by User"),
+             uiOutput("download_gene_lists_ui")
+      )
+    )
   )
 )
 
@@ -192,8 +356,7 @@ server <- function(input, output, session) {
           count <- length(saved_gene_lists$data[[name]]$genes)
           expandId <- paste0("expand_", gsub(" ", "_", name))
           fluidRow(
-            column(6, strong(name)),
-            column(3, paste("Genes:", count)),
+            column(9, strong(name)),
             column(3, actionButton(expandId, "Expand", class = "btn-sm"))
           )
         })
@@ -211,7 +374,7 @@ server <- function(input, output, session) {
           currentExpandedGeneList(name)
           # Get saved GeneIDs and query the genes table for their gene symbols
           geneIDs <- saved_gene_lists$data[[name]]$genes
-          print(geneIDs)
+          count <- length(saved_gene_lists$data[[name]]$genes)
           symbols <- if(length(geneIDs) == 0) {
             "None"
           } else {
@@ -222,10 +385,13 @@ server <- function(input, output, session) {
           }
           showModal(modalDialog(
             title = paste("Gene List:", name),
-            HTML(paste("<strong>Gene List (symbols):</strong><br>", symbols)),
+            tagList(
+              tags$div(tags$strong("Number of Genes:"), count),
+              tags$div(HTML(paste("<strong>Gene List:</strong><br>", symbols)))
+            ),
             footer = tagList(
               actionButton("apply_modal", "Apply Filters"),
-              actionButton("remove_modal", "Remove")
+              actionButton("remove_modal", "Remove", class = "btn btn-danger")
             ),
             easyClose = TRUE
           ))
@@ -398,43 +564,32 @@ server <- function(input, output, session) {
   })
 
   output$aggregated_table <- DT::renderDataTable({
-    gene_ids <- intersected_gene_ids()
-    if (length(gene_ids) == 0) {
-      return(DT::datatable(
-        data.frame(Message = "No matching gene IDs"),
-        rownames= FALSE,
-        options = list(dom = 't', paging = FALSE)
-      ))
-    }
-    cols_to_show <- if (!is.null(input$agg_columns) && length(input$agg_columns) > 0) {
-      paste(input$agg_columns, collapse = ", ")
-    } else {
-      "*"
-    }
-    placeholders <- paste(rep("?", length(gene_ids)), collapse = ", ")
-    sql <- paste("SELECT", cols_to_show, "FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = " ")
-    df <- dbGetQuery(con, sql, params = gene_ids)
+    req(input$agg_table)  # Ensure a table has been selected
+    df <- dbReadTable(con, input$agg_table)
+
     DT::datatable(
       df,
       escape = FALSE,
-      filter = "top",
-      rownames= FALSE,
+      filter = "none",        # Remove per-column search bars
+      rownames = FALSE,
       class = "display cell-border stripe",
       options = list(
         paging = TRUE,
-        searching = TRUE,
+        lengthChange = TRUE,  # Allow selection of number of rows
+        searching = FALSE,    # Remove the global search bar
         autoWidth = TRUE,
         responsive = TRUE,
         scrollX = TRUE,
+        dom = 't<"row"<"col-sm-4"l><"col-sm-4"i><"col-sm-4"p>>',  # Moves the length menu, info, and pagination to the bottom
         columnDefs = list(list(
           targets = "_all",
           render = JS("function(data, type, row, meta) {
-                        if (type === 'display' && typeof data === 'string' && data.length > 20) {
-                          return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 20) + '...</span>';
-                        } else {
-                          return data;
-                        }
-                      }")
+                    if (type === 'display' && typeof data === 'string' && data.length > 10) {
+                      return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 10) + '...</span>';
+                    } else {
+                      return data;
+                    }
+                  }")
         ))
       )
     )
@@ -997,25 +1152,30 @@ server <- function(input, output, session) {
   ## --- LIST INPUT MODAL LOGIC (for custom filter lists) ---
   observeEvent(input$list_input, {
     showModal(modalDialog(
-      title = "List Input Filter",
+      title = "Filter custom list (genes, phenotypes etc)",
       fluidPage(
+        fluidRow(h5('Select Table and Column to filter')),
         fluidRow(
           column(6,
-                 selectInput("list_input_table", "Select Table:",
+                 selectInput("list_input_table", "Table:",
                              choices = individual_tables, selected = individual_tables[1])
           ),
           column(6,
                  uiOutput("list_input_column_ui")
           )
         ),
+        hr(),
+        fluidRow(h5('Input custom list')),
         fluidRow(
           column(12,
-                 textInput("list_input_text", "Enter list:", value = "")
+                 textInput("list_input_text", NULL, value = "")
           )
         ),
+        hr(),
+        fluidRow(h5('Select list delimiter')),
         fluidRow(
           column(12,
-                 selectInput("list_input_separator", "Select Separator:",
+                 selectInput("list_input_separator", NULL,
                              choices = c("Semicolon (;)" = ";",
                                          "Comma (,)" = ",",
                                          "Whitespace" = " ",
@@ -1023,11 +1183,11 @@ server <- function(input, output, session) {
                              selected = ";")
           )
         ),
-        fluidRow(
-          column(12,
-                 actionButton("apply_list_input", "Apply", class = "btn-primary")
-          )
-        ),
+        # fluidRow(
+        #   column(12,
+        #          actionButton("apply_list_input", "Apply", class = "btn-primary")
+        #   )
+        # ),
         fluidRow(
           column(12,
                  htmlOutput("list_input_message")
@@ -1035,7 +1195,11 @@ server <- function(input, output, session) {
         )
       ),
       easyClose = TRUE,
-      footer = modalButton("Close")
+      # footer =
+       footer = tagList(
+         actionButton("apply_list_input", "Apply", class = "btn-primary"),
+          modalButton("Close")
+        )
     ))
   })
 
@@ -1043,7 +1207,7 @@ server <- function(input, output, session) {
     req(input$list_input_table)
     tbl <- input$list_input_table
     cols <- setdiff(dbListFields(con, tbl), "GeneID")
-    selectInput("list_input_column", "Select Column:", choices = cols, selected = cols[1])
+    selectInput("list_input_column", "Column:", choices = cols, selected = cols[1])
   })
 
   observeEvent(input$apply_list_input, {
@@ -1088,6 +1252,28 @@ server <- function(input, output, session) {
       HTML(paste(message_parts, collapse = "<br>"))
     })
   })
+
+  output$download_agg_table <- downloadHandler(
+    filename = function() {
+      paste0("aggregated_table_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      gene_ids <- intersected_gene_ids()
+      if(length(gene_ids) == 0) {
+        write.csv(data.frame(Message = "No matching gene IDs"), file, row.names = FALSE)
+      } else {
+        cols_to_show <- if (!is.null(input$agg_columns) && length(input$agg_columns) > 0) {
+          paste(input$agg_columns, collapse = ", ")
+        } else {
+          "*"
+        }
+        placeholders <- paste(rep("?", length(gene_ids)), collapse = ", ")
+        sql <- paste("SELECT", cols_to_show, "FROM aggregated WHERE GeneID IN (", placeholders, ")", sep = " ")
+        df <- dbGetQuery(con, sql, params = gene_ids)
+        write.csv(df, file, row.names = FALSE)
+      }
+    }
+  )
 }
 
 shinyApp(ui, server)
