@@ -171,16 +171,28 @@ ui <- page_navbar(
                           )
                         ),
                         conditionalPanel(
+                          # Bar/histogram options ui ----
                           condition = "input.plot_type == 'Bar Chart/Histogram'",
-                          selectInput(
-                            "bar_table",
-                            "Select table for Bar Chart/Histogram:",
-                            choices = individual_tables,
-                            selected = individual_tables[1]
+                          hr(),
+                          fluidRow(
+                            column(6,
+                                   selectInput(
+                                     "bar_table",
+                                     "Select Table:",
+                                     choices = individual_tables,
+                                     selected = individual_tables[1]
+                                   )
+                                   ),
+                            column(6,
+                                   selectInput("bar_col", "Select Column:", choices = NULL)
+                                   )
                           ),
-                          selectInput("bar_col", "Select column:", choices = NULL),
+                          hr(),
+                          selectizeInput("bar_gene_lists", "Select Gene List(s) to plot:", choices = NULL, multiple = TRUE),
+                          hr(),
                           uiOutput("bar_bin_size_ui"),
                           checkboxInput("bar_show_na", "Plot missing values", value = FALSE),
+                          hr(),
                           radioButtons(
                             "bar_y_type",
                             "Y-axis type:",
@@ -190,55 +202,99 @@ ui <- page_navbar(
                           ),
                           # Note: Removed bar_x_threshold; now only two Y thresholds:
                           numericInput("bar_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
-                          numericInput("bar_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
-                          selectizeInput("bar_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                          numericInput("bar_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1)
                         ),
                         conditionalPanel(
+                          # Violin options ui ----
                           condition = "input.plot_type == 'Violin/Box Plot'",
-                          uiOutput("violin_table_ui"),
-                          selectInput("violin_col", "Select numeric column:", choices = NULL),
+                          hr(),
+                          fluidRow(
+                            column(6,
+                                   uiOutput("violin_table_ui")
+                            ),
+                            column(6,
+                                   selectInput("violin_col", "Select numeric column:", choices = NULL)
+                            )
+                          ),
+                          hr(),
+                          selectizeInput("violin_gene_lists", "Select Gene List(s) to plot:", choices = NULL, multiple = TRUE),
+                          hr(),
                           checkboxInput("violin_show_points", "Show all points", value = FALSE),
+                          hr(),
                           # Two Y thresholds for Violin/Box Plot:
                           numericInput("violin_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
-                          numericInput("violin_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
-                          selectizeInput("violin_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                          numericInput("violin_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1)
                         ),
                         conditionalPanel(
                           condition = "input.plot_type == 'Scatter Plot'",
-                          selectInput(
-                            "scatter_table_x",
-                            "Select table for X:",
-                            choices = individual_tables,
-                            selected = individual_tables[1]
+                          hr(),
+                          fluidRow(
+                            column(6,
+                                   selectInput(
+                                     "scatter_table_x",
+                                     "Select table for X:",
+                                     choices = individual_tables,
+                                     selected = individual_tables[1]
+                                   )
+                            ),
+                            column(6,
+                                   selectInput(
+                                     "scatter_table_y",
+                                     "Select table for Y:",
+                                     choices = individual_tables,
+                                     selected = individual_tables[1]
+                                   )
+                            )
                           ),
-                          selectInput("scatter_x", "Select X column:", choices = NULL),
-                          selectInput(
-                            "scatter_table_y",
-                            "Select table for Y:",
-                            choices = individual_tables,
-                            selected = individual_tables[1]
+                          fluidRow(
+                            column(6,
+                                   selectInput("scatter_x", "Select X column:", choices = NULL)
+                            ),
+                            column(6,
+                                   selectInput("scatter_y", "Select Y column:", choices = NULL)
+                            )
                           ),
-                          selectInput("scatter_y", "Select Y column:", choices = NULL),
+                          hr(),
+                          selectizeInput("scatter_gene_lists", "Select Gene List(s) to plot:", choices = NULL, selected = "Current List", multiple = TRUE),
+                          hr(),
                           # Scatter Plot keeps its X threshold...
                           numericInput("scatter_x_threshold1", "X-axis Threshold 1 (optional):", value = NA, step = 1),
                           numericInput("scatter_x_threshold2", "X-axis Threshold 2 (optional):", value = NA, step = 1),
                           # ...and now has two Y thresholds:
                           numericInput("scatter_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
-                          numericInput("scatter_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
-                          selectizeInput("scatter_gene_lists", "Select Gene Lists:", choices = NULL, selected = "Current List", multiple = TRUE)
+                          numericInput("scatter_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1)
                         ),
                         conditionalPanel(
+                          # Stacked bar options ui ----
                           condition = "input.plot_type == 'Stacked Bar Chart'",
-                          selectInput(
-                            "stack_table_x",
-                            "Select table for X:",
-                            choices = individual_tables,
-                            selected = individual_tables[1]
+                          hr(),
+                          fluidRow(
+                            column(6,
+                                   selectInput(
+                                     "stack_table_x",
+                                     "Select table for X:",
+                                     choices = individual_tables,
+                                     selected = individual_tables[1]
+                                   )
+                            ),
+                            column(6,
+                                   uiOutput("stack_table_y_ui")
+                            )
                           ),
-                          selectInput("stack_x", "Select X column:", choices = NULL),
-                          uiOutput("stack_bin_size_ui"),
-                          uiOutput("stack_table_y_ui"),
-                          selectInput("stack_y", "Select Y column (factor):", choices = NULL),
+                          fluidRow(
+                            column(6,
+                                   selectInput("stack_x", "Select X column:", choices = NULL)
+                            ),
+                            column(6,
+                                   selectInput("stack_y", "Select Y column:", choices = NULL)
+                            )
+                          ),
+                          fluidRow(
+                            column(6,uiOutput("stack_bin_size_ui"))
+                          ),
+                          hr(),
+                          selectizeInput("stack_gene_list", "Select Gene List(s) to plot:", choices = NULL, selected = "Current List"),
+                          hr(),
                           radioButtons(
                             "stack_y_type",
                             "Y-axis display:",
@@ -246,21 +302,29 @@ ui <- page_navbar(
                             selected = "% of genes",
                             inline = TRUE
                           ),
-                          checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
-                          checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
+                          hr(),
+                          fluidRow(
+                            column(6,
+                                   checkboxInput("stack_show_na_x", "Show missing X", value = FALSE)
+                            ),
+                            column(6,
+                                   checkboxInput("stack_show_na_y", "Show missing Y", value = FALSE)
+                            )
+                          ),
+                          hr(),
                           # Remove any X threshold here; add two Y thresholds only:
                           numericInput("stack_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
-                          numericInput("stack_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
-                          selectizeInput("stack_gene_list", "Select Gene List:", choices = NULL, selected = "Current List")
+                          numericInput("stack_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1)
                         ),
                         conditionalPanel(
+                          # Upset options ui ----
                           condition = "input.plot_type == 'UpSet Plot'",
-                          selectizeInput("upset_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
+                          selectizeInput("upset_gene_lists", "Select Gene Lists to plot:", choices = NULL, multiple = TRUE)
                         )
                       ),
                       value = "plot_options"
                     ),
-                    open = NULL  # Ensure that both nested panels are closed by default
+                    open = "plot_options"  # Ensure that both nested panels are closed by default
                   )
                 ),
                 value = "options"
@@ -275,21 +339,21 @@ ui <- page_navbar(
                   ),
                   hr(),
                   fluidRow(
-                    column(12, actionButton("list_input", "Input custom list", width = "100%"))
+                    column(12, actionButton("list_input", "Input custom list", width = "100%", class = "btn-primary"))
                   ),
                   hr(),
                   # Dynamic filter inputs for each table (excluding GeneID)
                   lapply(individual_tables, function(tbl) {
                     tagList(
                       h5(tbl),
-                      uiOutput(paste0("filters_", tbl)),
+                      withSpinner(uiOutput(paste0("filters_", tbl))),
                       hr()
                     )
                   })
                 ),
                 value = "controls"
               ),
-              open = "controls"  # Set the default open top-level accordion panel
+              open = "saved"  # Set the default open top-level accordion panel
             )
           )
         ),
@@ -472,13 +536,21 @@ server <- function(input, output, session) {
             checkboxInput(na_id, label = "Include NA", value = TRUE)
           )
         } else {
-          # Initialize with "All"
+          distinct_vals <- dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]]
+          distinct_vals <- distinct_vals[!is.na(distinct_vals)]
           tagList(
             selectizeInput(input_id, label = col,
-                           choices = c("All", "Has no data"),
+                           choices = c("All", "Has no data", distinct_vals),
                            selected = "All", multiple = TRUE),
             checkboxInput(na_id, label = "Include NA", value = TRUE)
           )
+          # THIS SHOULD WORK - NEED TO DIAGNOSE WHY IT NO LONGER WORKS i.e. the choices = choices in updateSeletizeInput should work instead o getting distinct_vals...
+          # tagList(
+          #   selectizeInput(input_id, label = col,
+          #                  choices = c("All", "Has no data"),
+          #                  selected = "All", multiple = TRUE),
+          #   checkboxInput(na_id, label = "Include NA", value = TRUE)
+          # )
         }
       })
       do.call(tagList, ui_list)
@@ -566,29 +638,37 @@ server <- function(input, output, session) {
     req(input$agg_table)  # Ensure a table has been selected
     df <- dbReadTable(con, input$agg_table)
 
+    # Get the intersected geneIDs and filter the data frame
+    gene_ids <- intersected_gene_ids()
+    if(length(gene_ids) > 0){
+      df <- df[df$GeneID %in% gene_ids, ]
+    } else {
+      df <- data.frame(Message = "No intersecting GeneIDs found")
+    }
+
     DT::datatable(
       df,
       escape = FALSE,
-      filter = "none",        # Remove per-column search bars
+      filter = "none",
       rownames = FALSE,
       class = "display cell-border stripe",
       options = list(
         paging = TRUE,
-        lengthChange = TRUE,  # Allow selection of number of rows
-        searching = FALSE,    # Remove the global search bar
+        lengthChange = TRUE,
+        searching = FALSE,
         autoWidth = TRUE,
         responsive = TRUE,
         scrollX = TRUE,
-        dom = 't<"row"<"col-sm-4"l><"col-sm-4"i><"col-sm-4"p>>',  # Moves the length menu, info, and pagination to the bottom
+        dom = 't<"row"<"col-sm-4"i><"col-sm-4"l><"col-sm-4"p>>',
         columnDefs = list(list(
           targets = "_all",
           render = JS("function(data, type, row, meta) {
-                    if (type === 'display' && typeof data === 'string' && data.length > 10) {
-                      return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 10) + '...</span>';
-                    } else {
-                      return data;
-                    }
-                  }")
+                      if (type === 'display' && typeof data === 'string' && data.length > 10) {
+                        return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 10) + '...</span>';
+                      } else {
+                        return data;
+                      }
+                    }")
         ))
       )
     )
@@ -616,7 +696,7 @@ server <- function(input, output, session) {
     if (length(valid_tables) == 0) {
       return(HTML("<em>No tables with valid numeric columns available for Violin/Box Plot</em>"))
     }
-    selectInput("violin_table", "Select table for Violin/Box Plot:",
+    selectInput("violin_table", "Select table for Plot:",
                 choices = valid_tables,
                 selected = valid_tables[1])
   })
@@ -1164,17 +1244,7 @@ server <- function(input, output, session) {
                       autoWidth = TRUE,
                       responsive = TRUE,
                       scrollX = TRUE,
-                      dom = 't<"row"<"col-sm-4"l><"col-sm-4"i><"col-sm-4"p>>',  # Moves the length menu, info, and pagination to the bottom
-                      columnDefs = list(list(
-                        targets = "_all",
-                        render = JS("function(data, type, row, meta) {
-                    if (type === 'display' && typeof data === 'string' && data.length > 10) {
-                      return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 10) + '...</span>';
-                    } else {
-                      return data;
-                    }
-                  }")
-                      ))
+                      dom = 't<"row"<"col-sm-4"l><"col-sm-4"i><"col-sm-4"p>>'
                     ))
     } else {
       df <- current_plot_df()
@@ -1191,17 +1261,7 @@ server <- function(input, output, session) {
                         autoWidth = TRUE,
                         responsive = TRUE,
                         scrollX = TRUE,
-                        dom = 't<"row"<"col-sm-4"l><"col-sm-4"i><"col-sm-4"p>>',  # Moves the length menu, info, and pagination to the bottom
-                        columnDefs = list(list(
-                          targets = "_all",
-                          render = JS("function(data, type, row, meta) {
-                    if (type === 'display' && typeof data === 'string' && data.length > 10) {
-                      return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 10) + '...</span>';
-                    } else {
-                      return data;
-                    }
-                  }")
-                        ))
+                        dom = 't<"row"<"col-sm-4"l><"col-sm-4"i><"col-sm-4"p>>'
                       ))
       } else {
         DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE))
@@ -1361,11 +1421,6 @@ server <- function(input, output, session) {
                              selected = ";")
           )
         ),
-        # fluidRow(
-        #   column(12,
-        #          actionButton("apply_list_input", "Apply", class = "btn-primary")
-        #   )
-        # ),
         fluidRow(
           column(12,
                  htmlOutput("list_input_message")
