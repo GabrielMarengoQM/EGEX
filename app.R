@@ -184,10 +184,13 @@ ui <- page_navbar(
                           radioButtons(
                             "bar_y_type",
                             "Y-axis type:",
-                            choices = c("number of genes", "percentage of genes"),
+                            choices = c("number of genes", "% of genes"),
                             selected = "number of genes",
                             inline = TRUE
                           ),
+                          # Note: Removed bar_x_threshold; now only two Y thresholds:
+                          numericInput("bar_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
+                          numericInput("bar_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
                           selectizeInput("bar_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
                         ),
                         conditionalPanel(
@@ -195,6 +198,9 @@ ui <- page_navbar(
                           uiOutput("violin_table_ui"),
                           selectInput("violin_col", "Select numeric column:", choices = NULL),
                           checkboxInput("violin_show_points", "Show all points", value = FALSE),
+                          # Two Y thresholds for Violin/Box Plot:
+                          numericInput("violin_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
+                          numericInput("violin_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
                           selectizeInput("violin_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
                         ),
                         conditionalPanel(
@@ -213,13 +219,13 @@ ui <- page_navbar(
                             selected = individual_tables[1]
                           ),
                           selectInput("scatter_y", "Select Y column:", choices = NULL),
-                          selectizeInput(
-                            "scatter_gene_lists",
-                            "Select Gene Lists:",
-                            choices = NULL,
-                            selected = "Current List",
-                            multiple = TRUE
-                          )
+                          # Scatter Plot keeps its X threshold...
+                          numericInput("scatter_x_threshold1", "X-axis Threshold 1 (optional):", value = NA, step = 1),
+                          numericInput("scatter_x_threshold2", "X-axis Threshold 2 (optional):", value = NA, step = 1),
+                          # ...and now has two Y thresholds:
+                          numericInput("scatter_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
+                          numericInput("scatter_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
+                          selectizeInput("scatter_gene_lists", "Select Gene Lists:", choices = NULL, selected = "Current List", multiple = TRUE)
                         ),
                         conditionalPanel(
                           condition = "input.plot_type == 'Stacked Bar Chart'",
@@ -236,27 +242,20 @@ ui <- page_navbar(
                           radioButtons(
                             "stack_y_type",
                             "Y-axis display:",
-                            choices = c("number of genes", "percentage of genes"),
-                            selected = "percentage of genes",
+                            choices = c("number of genes", "% of genes"),
+                            selected = "% of genes",
                             inline = TRUE
                           ),
                           checkboxInput("stack_show_na_x", "Show missing values in X", value = FALSE),
                           checkboxInput("stack_show_na_y", "Show missing values in Y", value = FALSE),
-                          selectizeInput(
-                            "stack_gene_list",
-                            "Select Gene List:",
-                            choices = NULL,
-                            selected = "Current List"
-                          )
+                          # Remove any X threshold here; add two Y thresholds only:
+                          numericInput("stack_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
+                          numericInput("stack_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
+                          selectizeInput("stack_gene_list", "Select Gene List:", choices = NULL, selected = "Current List")
                         ),
                         conditionalPanel(
                           condition = "input.plot_type == 'UpSet Plot'",
-                          selectizeInput(
-                            "upset_gene_lists",
-                            "Select Gene Lists:",
-                            choices = NULL,
-                            multiple = TRUE
-                          )
+                          selectizeInput("upset_gene_lists", "Select Gene Lists:", choices = NULL, multiple = TRUE)
                         )
                       ),
                       value = "plot_options"
@@ -297,7 +296,7 @@ ui <- page_navbar(
         # Main content area with tabs
         tabsetPanel(
           tabPanel(
-            "Gene table",
+            "Gene Table",
             withSpinner(card(
               DT::dataTableOutput("aggregated_table"),
               full_screen = TRUE, height = 625
@@ -307,7 +306,7 @@ ui <- page_navbar(
             )
           ),
           tabPanel(
-            "Plot",
+            "Plot Data",
             withSpinner(uiOutput("plot_ui")),
             withSpinner(DT::dataTableOutput("plot_data_table")),
             fluidRow(
@@ -743,6 +742,7 @@ server <- function(input, output, session) {
     }
   })
 
+  # Helper function for no data (i.e. no intersecting geneIDs)
   noDataPlot <- function() {
     plot_ly() %>%
       layout(title = "No data to plot",
@@ -754,16 +754,31 @@ server <- function(input, output, session) {
              ))
   }
 
+  # Helper function for when inputs are missing
+  selectDataPlot <- function() {
+    plot_ly() %>%
+      layout(title = "Select data to plot in Plot Options",
+             annotations = list(
+               list(text = "Select data to plot in Plot Options",
+                    showarrow = FALSE,
+                    x = 0.5, y = 0.5,
+                    xref = "paper", yref = "paper")
+             ))
+  }
+
   # Reactive value to store the data frame used for plotting
   current_plot_df <- reactiveVal(NULL)
 
   plot_obj <- reactive({
     req(input$plot_type)
+
+    # --- BAR CHART/HISTOGRAM ---
     if(input$plot_type == "Bar Chart/Histogram") {
+      # Check if required inputs have been selected.
       if (is.null(input$bar_table) || input$bar_table == "" ||
           is.null(input$bar_col) || input$bar_col == "" ||
           is.null(input$bar_gene_lists) || length(input$bar_gene_lists) == 0)
-        return(noDataPlot())
+        return(selectDataPlot())
 
       df <- filtered_data(input$bar_table)()
       if (nrow(df) == 0) return(noDataPlot())
@@ -787,7 +802,7 @@ server <- function(input, output, session) {
         if(input$bar_show_na) {
           combined$value <- ifelse(is.na(combined$value), "Missing", combined$value)
         }
-        if(input$bar_y_type=="percentage of genes") {
+        if(input$bar_y_type=="% of genes") {
           counts <- combined %>%
             group_by(gene_list, value) %>%
             summarise(count = n_distinct(GeneID), .groups = "drop") %>%
@@ -809,7 +824,7 @@ server <- function(input, output, session) {
           bin_args <- if(!is.null(input$bar_bin_size)) list(size = input$bar_bin_size) else NULL
           p <- add_histogram(p, data = non_missing, x = ~get(input$bar_col),
                              color = ~gene_list,
-                             histnorm = ifelse(input$bar_y_type=="percentage of genes", "percent", ""),
+                             histnorm = ifelse(input$bar_y_type=="% of genes", "percent", ""),
                              xbins = bin_args)
         }
         if(input$bar_show_na && missing_count > 0) {
@@ -820,16 +835,41 @@ server <- function(input, output, session) {
       p <- layout(p, barmode = "group",
                   title = paste("Bar Chart/Histogram of", input$bar_col),
                   xaxis = list(title = input$bar_col),
-                  yaxis = list(title = ifelse(input$bar_y_type=="percentage of genes", "percentage of genes", "number of genes")))
+                  yaxis = list(title = ifelse(input$bar_y_type=="% of genes", "% of genes", "number of genes")))
+
+      # --- Add two Y threshold lines (only Y thresholds for Bar Chart) ---
+      if(is.numeric(combined[[input$bar_col]])) {
+        thresholdShapes <- list()
+        if(!is.na(input$bar_y_threshold1)) {
+          thresholdShapes[[length(thresholdShapes)+1]] <- list(
+            type = "line",
+            xref = "paper", x0 = 0, x1 = 1,
+            yref = "y", y0 = input$bar_y_threshold1, y1 = input$bar_y_threshold1,
+            line = list(dash = "dash", color = "red")
+          )
+        }
+        if(!is.na(input$bar_y_threshold2)) {
+          thresholdShapes[[length(thresholdShapes)+1]] <- list(
+            type = "line",
+            xref = "paper", x0 = 0, x1 = 1,
+            yref = "y", y0 = input$bar_y_threshold2, y1 = input$bar_y_threshold2,
+            line = list(dash = "dash", color = "red")
+          )
+        }
+        if(length(thresholdShapes) > 0) {
+          p <- p %>% layout(shapes = thresholdShapes)
+        }
+      }
 
       current_plot_df(combined)
       return(p)
 
+      # --- VIOLIN/BOX PLOT ---
     } else if(input$plot_type == "Violin/Box Plot") {
       if (is.null(input$violin_table) || input$violin_table == "" ||
           is.null(input$violin_col) || input$violin_col == "" ||
           is.null(input$violin_gene_lists) || length(input$violin_gene_lists) == 0)
-        return(noDataPlot())
+        return(selectDataPlot())
 
       df <- filtered_data(input$violin_table)()
       if (nrow(df) == 0) return(noDataPlot())
@@ -853,7 +893,7 @@ server <- function(input, output, session) {
 
       gene_map <- gene_mapping()
       df_non_missing <- merge(df_non_missing, gene_map, by = "GeneID", all.x = TRUE)
-      df_non_missing$hover_text <- paste("Gene:", df_non_missing$gene_symbol,
+      df_non_missing$hover_text <- paste("Gene:", df_non_missing$symbol,
                                          "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
 
       p <- plot_ly(data = df_non_missing, y = ~get(input$violin_col), color = ~gene_list, type = "violin",
@@ -865,16 +905,39 @@ server <- function(input, output, session) {
       p <- layout(p, title = paste("Violin/Box Plot of", input$violin_col),
                   yaxis = list(title = input$violin_col))
 
+      # --- Add two Y threshold lines for Violin/Box Plot ---
+      thresholdShapes <- list()
+      if(!is.na(input$violin_y_threshold1)) {
+        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+          type = "line",
+          xref = "paper", x0 = 0, x1 = 1,
+          yref = "y", y0 = input$violin_y_threshold1, y1 = input$violin_y_threshold1,
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      if(!is.na(input$violin_y_threshold2)) {
+        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+          type = "line",
+          xref = "paper", x0 = 0, x1 = 1,
+          yref = "y", y0 = input$violin_y_threshold2, y1 = input$violin_y_threshold2,
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      if(length(thresholdShapes) > 0) {
+        p <- p %>% layout(shapes = thresholdShapes)
+      }
+
       current_plot_df(df_non_missing)
       return(p)
 
+      # --- SCATTER PLOT ---
     } else if(input$plot_type == "Scatter Plot") {
       if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
           is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
           is.null(input$scatter_x) || input$scatter_x == "" ||
           is.null(input$scatter_y) || input$scatter_y == "" ||
           is.null(input$scatter_gene_lists) || length(input$scatter_gene_lists)==0)
-        return(noDataPlot())
+        return(selectDataPlot())
 
       gene_ids <- intersected_gene_ids()
       if(length(gene_ids)==0) return(noDataPlot())
@@ -909,7 +972,7 @@ server <- function(input, output, session) {
 
       gene_map <- gene_mapping()
       combined <- merge(combined, gene_map, by = "GeneID", all.x = TRUE)
-      combined$hover_text <- paste("Gene:", combined$gene_symbol)
+      combined$hover_text <- paste("Gene:", combined$symbol)
 
       p <- plot_ly(data = combined,
                    x = ~get(input$scatter_x),
@@ -923,16 +986,63 @@ server <- function(input, output, session) {
                xaxis = list(title = input$scatter_x),
                yaxis = list(title = input$scatter_y))
 
+      # --- Add thresholds for Scatter Plot ---
+      thresholdShapes <- list()
+      # X thresholds (two)
+      if(!is.na(input$scatter_x_threshold1)) {
+        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+          type = "line",
+          x0 = input$scatter_x_threshold1, x1 = input$scatter_x_threshold1,
+          y0 = min(combined[[input$scatter_y]], na.rm = TRUE),
+          y1 = max(combined[[input$scatter_y]], na.rm = TRUE),
+          xref = "x", yref = "y",
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      if(!is.na(input$scatter_x_threshold2)) {
+        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+          type = "line",
+          x0 = input$scatter_x_threshold2, x1 = input$scatter_x_threshold2,
+          y0 = min(combined[[input$scatter_y]], na.rm = TRUE),
+          y1 = max(combined[[input$scatter_y]], na.rm = TRUE),
+          xref = "x", yref = "y",
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      # Y thresholds (two)
+      if(!is.na(input$scatter_y_threshold1)) {
+        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+          type = "line",
+          xref = "paper", x0 = 0, x1 = 1,
+          y0 = input$scatter_y_threshold1, y1 = input$scatter_y_threshold1,
+          yref = "y",
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      if(!is.na(input$scatter_y_threshold2)) {
+        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+          type = "line",
+          xref = "paper", x0 = 0, x1 = 1,
+          y0 = input$scatter_y_threshold2, y1 = input$scatter_y_threshold2,
+          yref = "y",
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      if(length(thresholdShapes) > 0) {
+        p <- p %>% layout(shapes = thresholdShapes)
+      }
+
       current_plot_df(combined)
       return(p)
 
+      # --- STACKED BAR CHART ---
     } else if(input$plot_type == "Stacked Bar Chart") {
       if (is.null(input$stack_table_x) || input$stack_table_x == "" ||
           is.null(input$stack_x) || input$stack_x == "" ||
           is.null(input$stack_table_y) || input$stack_table_y == "" ||
           is.null(input$stack_y) || input$stack_y == "" ||
           is.null(input$stack_gene_list) || input$stack_gene_list == "")
-        return(noDataPlot())
+        return(selectDataPlot())
 
       if(input$stack_table_x == input$stack_table_y) {
         df_joint <- filtered_data(input$stack_table_x)()
@@ -983,13 +1093,13 @@ server <- function(input, output, session) {
         group_by(bin, group) %>%
         summarise(count = n(), .groups = "drop") %>%
         ungroup()
-      if(input$stack_y_type == "percentage of genes") {
+      if(input$stack_y_type == "% of genes") {
         summary_df <- summary_df %>%
           group_by(bin) %>%
           mutate(percentage = count / sum(count) * 100) %>%
           ungroup()
         y_val <- summary_df$percentage
-        y_title <- "percentage of genes"
+        y_title <- "% of genes"
       } else {
         y_val <- summary_df$count
         y_title <- "number of genes"
@@ -1000,6 +1110,28 @@ server <- function(input, output, session) {
                xaxis = list(title = input$stack_x),
                yaxis = list(title = y_title),
                barmode = "stack")
+
+      # --- Add two Y threshold lines for Stacked Bar Chart (no X thresholds) ---
+      thresholdShapes <- list()
+      if(!is.na(input$stack_y_threshold1)) {
+        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+          type = "line",
+          xref = "paper", x0 = 0, x1 = 1,
+          yref = "y", y0 = input$stack_y_threshold1, y1 = input$stack_y_threshold1,
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      if(!is.na(input$stack_y_threshold2)) {
+        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+          type = "line",
+          xref = "paper", x0 = 0, x1 = 1,
+          yref = "y", y0 = input$stack_y_threshold2, y1 = input$stack_y_threshold2,
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      if(length(thresholdShapes) > 0) {
+        p <- p %>% layout(shapes = thresholdShapes)
+      }
 
       current_plot_df(summary_df)
       return(p)
@@ -1020,11 +1152,57 @@ server <- function(input, output, session) {
 
   output$plot_data_table <- DT::renderDataTable({
     if (input$plot_type == "UpSet Plot") {
-      DT::datatable(data.frame(Message = "Data table not available for UpSet Plot"), options = list(dom = 't'))
+      DT::datatable(data.frame(Message = "Data table not available for UpSet Plot"),
+                    escape = FALSE,
+                    filter = "none",        # Remove per-column search bars
+                    rownames = FALSE,
+                    class = "display cell-border stripe",
+                    options = list(
+                      paging = TRUE,
+                      lengthChange = TRUE,  # Allow selection of number of rows
+                      searching = FALSE,    # Remove the global search bar
+                      autoWidth = TRUE,
+                      responsive = TRUE,
+                      scrollX = TRUE,
+                      dom = 't<"row"<"col-sm-4"l><"col-sm-4"i><"col-sm-4"p>>',  # Moves the length menu, info, and pagination to the bottom
+                      columnDefs = list(list(
+                        targets = "_all",
+                        render = JS("function(data, type, row, meta) {
+                    if (type === 'display' && typeof data === 'string' && data.length > 10) {
+                      return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 10) + '...</span>';
+                    } else {
+                      return data;
+                    }
+                  }")
+                      ))
+                    ))
     } else {
       df <- current_plot_df()
       if (is.null(df) || nrow(df) == 0) {
-        DT::datatable(data.frame(Message = "No data available for table"), options = list(dom = 't'))
+        DT::datatable(data.frame(Message = "No data available for table"),
+                      escape = FALSE,
+                      filter = "none",        # Remove per-column search bars
+                      rownames = FALSE,
+                      class = "display cell-border stripe",
+                      options = list(
+                        paging = TRUE,
+                        lengthChange = TRUE,  # Allow selection of number of rows
+                        searching = FALSE,    # Remove the global search bar
+                        autoWidth = TRUE,
+                        responsive = TRUE,
+                        scrollX = TRUE,
+                        dom = 't<"row"<"col-sm-4"l><"col-sm-4"i><"col-sm-4"p>>',  # Moves the length menu, info, and pagination to the bottom
+                        columnDefs = list(list(
+                          targets = "_all",
+                          render = JS("function(data, type, row, meta) {
+                    if (type === 'display' && typeof data === 'string' && data.length > 10) {
+                      return '<span title=\"' + data.replace(/\"/g, '&quot;') + '\">' + data.substr(0, 10) + '...</span>';
+                    } else {
+                      return data;
+                    }
+                  }")
+                        ))
+                      ))
       } else {
         DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE))
       }
@@ -1064,7 +1242,7 @@ server <- function(input, output, session) {
     sets <- gene_list_sets()
     if(length(sets) < 2 || all(sapply(sets, length) < 2)) {
       plot.new()
-      text(0.5, 0.5, "Select two lists to show UpSet Plot.")
+      text(0.5, 0.5, "Select at least two gene lists to show UpSet Plot.")
       return()
     }
     m <- fromList(sets)
