@@ -10,6 +10,7 @@ library(zip) # downloads
 library(UpSetR) # upset plot
 library(shinyWidgets) # additional UI
 library(shinycssloaders) # loaders
+library(ggsci) # plot palettes
 
 # Connect to DuckDB
 con <- dbConnect(duckdb(), "mydb.duckdb")
@@ -316,6 +317,10 @@ ui <- page_navbar(
                           numericInput("stack_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
                           numericInput("stack_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1)
                         ),
+                        hr(),
+                        selectInput("color_palette", "Select Color Palette:",
+                                    choices = c("NPG", "AAAS", "Lancet", "JCO", "NEJM", "D3", "Simpsons", "Rick and Morty"),
+                                    selected = "NPG"),
                         conditionalPanel(
                           # Upset options ui ----
                           condition = "input.plot_type == 'UpSet Plot'",
@@ -849,12 +854,35 @@ server <- function(input, output, session) {
   # Reactive value to store the data frame used for plotting
   current_plot_df <- reactiveVal(NULL)
 
+  # Helper function to return a palette vector given a palette name and number of colors
+  get_palette <- function(palette_name, n) {
+    if(palette_name == "NPG") {
+      return(ggsci::pal_npg()(n))
+    } else if(palette_name == "AAAS") {
+      return(ggsci::pal_aaas()(n))
+    } else if(palette_name == "Lancet") {
+      return(ggsci::pal_lancet()(n))
+    } else if(palette_name == "JCO") {
+      return(ggsci::pal_jco()(n))
+    } else if(palette_name == "NEJM") {
+      return(ggsci::pal_nejm()(n))
+    } else if(palette_name == "D3") {
+      return(ggsci::pal_d3()(n))
+    } else if(palette_name == "Simpsons") {
+      return(ggsci::pal_simpsons()(n))
+    } else if(palette_name == "Rick and Morty") {
+      return(ggsci::pal_rickandmorty()(n))
+    } else {
+      return(ggsci::pal_npg()(n))
+    }
+  }
+
+  # Reactive plot object
   plot_obj <- reactive({
     req(input$plot_type)
 
-    # --- BAR CHART/HISTOGRAM ---
     if(input$plot_type == "Bar Chart/Histogram") {
-      # Check if required inputs have been selected.
+      # Ensure required inputs are selected
       if (is.null(input$bar_table) || input$bar_table == "" ||
           is.null(input$bar_col) || input$bar_col == "" ||
           is.null(input$bar_gene_lists) || length(input$bar_gene_lists) == 0)
@@ -889,35 +917,55 @@ server <- function(input, output, session) {
             group_by(gene_list) %>%
             mutate(percentage = count/sum(count)*100) %>%
             ungroup()
-          p <- plot_ly(data = counts, x = ~value, y = ~percentage, color = ~gene_list, type = "bar")
+          n_groups <- length(unique(counts$gene_list))
+          p <- plot_ly(
+            data = counts,
+            x = ~value,
+            y = ~percentage,
+            color = ~gene_list,
+            type = "bar",
+            colors = get_palette(input$color_palette, n_groups)
+          )
         } else {
           counts <- combined %>%
             group_by(gene_list, value) %>%
             summarise(count = n_distinct(GeneID), .groups = "drop")
-          p <- plot_ly(data = counts, x = ~value, y = ~count, color = ~gene_list, type = "bar")
+          n_groups <- length(unique(counts$gene_list))
+          p <- plot_ly(
+            data = counts,
+            x = ~value,
+            y = ~count,
+            color = ~gene_list,
+            type = "bar",
+            colors = get_palette(input$color_palette, n_groups)
+          )
         }
       } else {
+        # For numeric x columns
         non_missing <- combined[!is.na(combined[[input$bar_col]]), ]
         missing_count <- sum(is.na(combined[[input$bar_col]]))
         p <- plot_ly()
         if(nrow(non_missing) > 0) {
           bin_args <- if(!is.null(input$bar_bin_size)) list(size = input$bar_bin_size) else NULL
+          n_groups <- length(unique(non_missing$gene_list))
           p <- add_histogram(p, data = non_missing, x = ~get(input$bar_col),
                              color = ~gene_list,
                              histnorm = ifelse(input$bar_y_type=="% of genes", "percent", ""),
-                             xbins = bin_args)
+                             xbins = bin_args,
+                             colors = get_palette(input$color_palette, n_groups))
         }
         if(input$bar_show_na && missing_count > 0) {
           p <- add_trace(p, x = "Missing", y = missing_count, type = "bar", name = "Missing")
         }
       }
 
-      p <- layout(p, barmode = "group",
+      p <- layout(p,
+                  barmode = "group",
                   title = paste("Bar Chart/Histogram of", input$bar_col),
                   xaxis = list(title = input$bar_col),
                   yaxis = list(title = ifelse(input$bar_y_type=="% of genes", "% of genes", "number of genes")))
 
-      # --- Add two Y threshold lines (only Y thresholds for Bar Chart) ---
+      # Add threshold lines if specified
       if(is.numeric(combined[[input$bar_col]])) {
         thresholdShapes <- list()
         if(!is.na(input$bar_y_threshold1)) {
@@ -940,11 +988,9 @@ server <- function(input, output, session) {
           p <- p %>% layout(shapes = thresholdShapes)
         }
       }
-
       current_plot_df(combined)
       return(p)
 
-      # --- VIOLIN/BOX PLOT ---
     } else if(input$plot_type == "Violin/Box Plot") {
       if (is.null(input$violin_table) || input$violin_table == "" ||
           is.null(input$violin_col) || input$violin_col == "" ||
@@ -976,16 +1022,23 @@ server <- function(input, output, session) {
       df_non_missing$hover_text <- paste("Gene:", df_non_missing$symbol,
                                          "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
 
-      p <- plot_ly(data = df_non_missing, y = ~get(input$violin_col), color = ~gene_list, type = "violin",
-                   box = list(visible = TRUE),
-                   meanline = list(visible = TRUE),
-                   points = ifelse(input$violin_show_points, "all", "outliers"),
-                   text = ~hover_text,
-                   hoverinfo = "text")
-      p <- layout(p, title = paste("Violin/Box Plot of", input$violin_col),
+      n_groups <- length(unique(df_non_missing$gene_list))
+      p <- plot_ly(
+        data = df_non_missing,
+        y = ~get(input$violin_col),
+        color = ~gene_list,
+        type = "violin",
+        box = list(visible = TRUE),
+        meanline = list(visible = TRUE),
+        points = ifelse(input$violin_show_points, "all", "outliers"),
+        text = ~hover_text,
+        hoverinfo = "text",
+        colors = get_palette(input$color_palette, n_groups)
+      )
+      p <- layout(p,
+                  title = paste("Violin/Box Plot of", input$violin_col),
                   yaxis = list(title = input$violin_col))
 
-      # --- Add two Y threshold lines for Violin/Box Plot ---
       thresholdShapes <- list()
       if(!is.na(input$violin_y_threshold1)) {
         thresholdShapes[[length(thresholdShapes)+1]] <- list(
@@ -1006,11 +1059,9 @@ server <- function(input, output, session) {
       if(length(thresholdShapes) > 0) {
         p <- p %>% layout(shapes = thresholdShapes)
       }
-
       current_plot_df(df_non_missing)
       return(p)
 
-      # --- SCATTER PLOT ---
     } else if(input$plot_type == "Scatter Plot") {
       if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
           is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
@@ -1054,21 +1105,23 @@ server <- function(input, output, session) {
       combined <- merge(combined, gene_map, by = "GeneID", all.x = TRUE)
       combined$hover_text <- paste("Gene:", combined$symbol)
 
-      p <- plot_ly(data = combined,
-                   x = ~get(input$scatter_x),
-                   y = ~get(input$scatter_y),
-                   type = "scatter",
-                   mode = "markers",
-                   color = ~gene_list,
-                   text = ~hover_text,
-                   hoverinfo = "text+x+y") %>%
+      n_groups <- length(unique(combined$gene_list))
+      p <- plot_ly(
+        data = combined,
+        x = ~get(input$scatter_x),
+        y = ~get(input$scatter_y),
+        type = "scatter",
+        mode = "markers",
+        color = ~gene_list,
+        text = ~hover_text,
+        hoverinfo = "text+x+y",
+        colors = get_palette(input$color_palette, n_groups)
+      ) %>%
         layout(title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
                xaxis = list(title = input$scatter_x),
                yaxis = list(title = input$scatter_y))
 
-      # --- Add thresholds for Scatter Plot ---
       thresholdShapes <- list()
-      # X thresholds (two)
       if(!is.na(input$scatter_x_threshold1)) {
         thresholdShapes[[length(thresholdShapes)+1]] <- list(
           type = "line",
@@ -1089,7 +1142,6 @@ server <- function(input, output, session) {
           line = list(dash = "dash", color = "red")
         )
       }
-      # Y thresholds (two)
       if(!is.na(input$scatter_y_threshold1)) {
         thresholdShapes[[length(thresholdShapes)+1]] <- list(
           type = "line",
@@ -1115,7 +1167,6 @@ server <- function(input, output, session) {
       current_plot_df(combined)
       return(p)
 
-      # --- STACKED BAR CHART ---
     } else if(input$plot_type == "Stacked Bar Chart") {
       if (is.null(input$stack_table_x) || input$stack_table_x == "" ||
           is.null(input$stack_x) || input$stack_x == "" ||
@@ -1185,13 +1236,18 @@ server <- function(input, output, session) {
         y_title <- "number of genes"
       }
 
-      p <- plot_ly(data = summary_df, x = ~bin, y = ~y_val, color = ~group, type = "bar") %>%
+      n_groups <- length(unique(summary_df$group))
+      p <- plot_ly(data = summary_df,
+                   x = ~bin,
+                   y = ~y_val,
+                   color = ~group,
+                   type = "bar",
+                   colors = get_palette(input$color_palette, n_groups)) %>%
         layout(title = paste("Stacked Bar Chart: % of", input$stack_y, "by", input$stack_x),
                xaxis = list(title = input$stack_x),
                yaxis = list(title = y_title),
                barmode = "stack")
 
-      # --- Add two Y threshold lines for Stacked Bar Chart (no X thresholds) ---
       thresholdShapes <- list()
       if(!is.na(input$stack_y_threshold1)) {
         thresholdShapes[[length(thresholdShapes)+1]] <- list(
@@ -1215,6 +1271,17 @@ server <- function(input, output, session) {
 
       current_plot_df(summary_df)
       return(p)
+
+    } else if(input$plot_type == "UpSet Plot") {
+      req(input$plot_type == "UpSet Plot")
+      sets <- gene_list_sets()
+      if(length(sets) < 2 || all(sapply(sets, length) < 2)) {
+        plot.new()
+        text(0.5, 0.5, "Select at least two gene lists to show UpSet Plot.")
+        return()
+      }
+      m <- fromList(sets)
+      upset(m, order.by = "freq")
     }
   })
 
