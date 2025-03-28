@@ -211,7 +211,14 @@ ui <- page_navbar(
                                   hr(),
                                   # Two Y thresholds for Violin/Box Plot:
                                   numericInput("violin_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
-                                  numericInput("violin_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1)
+                                  numericInput("violin_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1),
+                                  hr(),
+                                  radioButtons("violin_plot_style", "Plot Style:",
+                                               choices = c("Violin Plot" = "violin",
+                                                           "Box Plot" = "box",
+                                                           "Violin with Box Plot" = "violin_box"),
+                                               selected = "violin_box",
+                                               inline = TRUE)
                                 ),
                                 conditionalPanel(
                                   condition = "input.plot_type == 'Scatter Plot'",
@@ -653,7 +660,7 @@ server <- function(input, output, session) {
     if (length(valid_tables) == 0) {
       return(HTML("<em>No tables with valid numeric columns available for Violin/Box Plot</em>"))
     }
-    selectInput("violin_table", "Select table for Violin/Box Plot:",
+    selectInput("violin_table", "Select table for Plot:",
                 choices = valid_tables,
                 selected = valid_tables[1])
   })
@@ -985,43 +992,74 @@ server <- function(input, output, session) {
       df_non_missing$hover_text <- paste("Gene:", df_non_missing$symbol,
                                          "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
 
+      # Save the processed data for display in the table
       current_plot_df(df_non_missing)
 
       n_groups <- length(unique(df_non_missing$gene_list))
-      p <- plot_ly(
-        data = df_non_missing,
-        y = ~get(input$violin_col),
-        color = ~gene_list,
-        type = "violin",
-        box = list(visible = TRUE),
-        meanline = list(visible = TRUE),
-        points = ifelse(input$violin_show_points, "all", "outliers"),
-        text = ~hover_text,
-        hoverinfo = "text",
-        colors = get_palette(input$color_palette, n_groups)
-      )
+
+      # Create the plot based on the user's selected style
+      if (input$violin_plot_style == "violin") {
+        p <- plot_ly(
+          data = df_non_missing,
+          y = ~get(input$violin_col),
+          type = "violin",
+          box = list(visible = FALSE),
+          meanline = list(visible = TRUE),
+          points = ifelse(input$violin_show_points, "all", "outliers"),
+          text = ~hover_text,
+          hoverinfo = "text",
+          color = ~gene_list,
+          colors = get_palette(input$color_palette, n_groups)
+        )
+      } else if (input$violin_plot_style == "box") {
+        p <- plot_ly(
+          data = df_non_missing,
+          y = ~get(input$violin_col),
+          type = "box",
+          points = ifelse(input$violin_show_points, "all", "outliers"),
+          text = ~hover_text,
+          hoverinfo = "text",
+          color = ~gene_list,
+          colors = get_palette(input$color_palette, n_groups)
+        )
+      } else if (input$violin_plot_style == "violin_box") {
+        p <- plot_ly(
+          data = df_non_missing,
+          y = ~get(input$violin_col),
+          type = "violin",
+          box = list(visible = TRUE),
+          meanline = list(visible = TRUE),
+          points = ifelse(input$violin_show_points, "all", "outliers"),
+          text = ~hover_text,
+          hoverinfo = "text",
+          color = ~gene_list,
+          colors = get_palette(input$color_palette, n_groups)
+        )
+      }
+
       p <- layout(p,
                   title = paste("Violin/Box Plot of", input$violin_col),
                   yaxis = list(title = input$violin_col))
 
+      # Add threshold lines for the y-axis regardless of plot type, since y-values are numeric
       thresholdShapes <- list()
-      if(!is.na(input$violin_y_threshold1)) {
-        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+      if (!is.na(input$violin_y_threshold1)) {
+        thresholdShapes[[length(thresholdShapes) + 1]] <- list(
           type = "line",
           xref = "paper", x0 = 0, x1 = 1,
           yref = "y", y0 = input$violin_y_threshold1, y1 = input$violin_y_threshold1,
           line = list(dash = "dash", color = "red")
         )
       }
-      if(!is.na(input$violin_y_threshold2)) {
-        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+      if (!is.na(input$violin_y_threshold2)) {
+        thresholdShapes[[length(thresholdShapes) + 1]] <- list(
           type = "line",
           xref = "paper", x0 = 0, x1 = 1,
           yref = "y", y0 = input$violin_y_threshold2, y1 = input$violin_y_threshold2,
           line = list(dash = "dash", color = "red")
         )
       }
-      if(length(thresholdShapes) > 0) {
+      if (length(thresholdShapes) > 0) {
         p <- p %>% layout(shapes = thresholdShapes)
       }
 
