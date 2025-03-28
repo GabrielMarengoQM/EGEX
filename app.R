@@ -127,12 +127,12 @@ ui <- page_navbar(
                                       actionButton("add_gene_list", "+ Save current gene list", class = "btn btn-success"), value = "saved"),
                       # TABLE/PLOT OPTIONS ----
                       accordion_panel(
-                        tagList(icon("columns"), "Table/Plot Options"),
+                        tagList(icon("columns"), "Gene Table/Plot Options"),
                         tagList(
                           accordion(
                             # TABLE OPTIONS ----
                             accordion_panel(
-                              tagList(icon("table"), "Table Options"),
+                              tagList(icon("table"), "Gene Table Options"),
                               tagList(
                                 selectInput(
                                   "agg_table",
@@ -833,8 +833,8 @@ server <- function(input, output, session) {
   plot_obj <- reactive({
     req(input$plot_type)
 
-    if(input$plot_type == "Bar Chart/Histogram") {
-      # Ensure required inputs are selected
+    if (input$plot_type == "Bar Chart/Histogram") {
+      # Check required inputs
       if (is.null(input$bar_table) || input$bar_table == "" ||
           is.null(input$bar_col) || input$bar_col == "" ||
           is.null(input$bar_gene_lists) || length(input$bar_gene_lists) == 0)
@@ -846,104 +846,115 @@ server <- function(input, output, session) {
       gene_ids <- intersected_gene_ids()
       if (length(gene_ids) == 0) return(noDataPlot())
       df <- df[df$GeneID %in% gene_ids, ]
-      if(nrow(df) == 0) return(noDataPlot())
+      if (nrow(df) == 0) return(noDataPlot())
 
+      # Combine data across selected gene lists
       combined <- do.call(rbind, lapply(input$bar_gene_lists, function(listName) {
-        subset_genes <- if(listName == "Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
+        subset_genes <- if (listName == "Current List") gene_ids else saved_gene_lists$data[[listName]]$genes
         df_subset <- df[df$GeneID %in% subset_genes, , drop = FALSE]
-        if(nrow(df_subset)==0) return(NULL)
+        if (nrow(df_subset) == 0) return(NULL)
         df_subset$gene_list <- listName
         df_subset
       }))
-      if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+      if (is.null(combined) || nrow(combined) == 0) return(noDataPlot())
 
-      if(!is.numeric(combined[[input$bar_col]])) {
+      # If the chosen column is non-numeric (categorical)
+      if (!is.numeric(combined[[input$bar_col]])) {
         combined$value <- combined[[input$bar_col]]
-        if(input$bar_show_na) {
+        if (input$bar_show_na) {
           combined$value <- ifelse(is.na(combined$value), "Missing", combined$value)
         }
-        if(input$bar_y_type=="% of genes") {
-          counts <- combined %>%
+        if (input$bar_y_type == "% of genes") {
+          agg_df <- combined %>%
             group_by(gene_list, value) %>%
             summarise(count = n_distinct(GeneID), .groups = "drop") %>%
             group_by(gene_list) %>%
             mutate(percentage = count/sum(count)*100) %>%
             ungroup()
-          n_groups <- length(unique(counts$gene_list))
           p <- plot_ly(
-            data = counts,
+            data = agg_df,
             x = ~value,
             y = ~percentage,
             color = ~gene_list,
             type = "bar",
-            colors = get_palette(input$color_palette, n_groups)
+            colors = get_palette(input$color_palette, length(unique(agg_df$gene_list)))
           )
         } else {
-          counts <- combined %>%
+          agg_df <- combined %>%
             group_by(gene_list, value) %>%
             summarise(count = n_distinct(GeneID), .groups = "drop")
-          n_groups <- length(unique(counts$gene_list))
           p <- plot_ly(
-            data = counts,
+            data = agg_df,
             x = ~value,
             y = ~count,
             color = ~gene_list,
             type = "bar",
-            colors = get_palette(input$color_palette, n_groups)
+            colors = get_palette(input$color_palette, length(unique(agg_df$gene_list)))
           )
         }
+        # Save aggregated (plot) data
+        current_plot_df(agg_df)
       } else {
-        # For numeric x columns
+        # For numeric columns, compute histogram counts manually
         non_missing <- combined[!is.na(combined[[input$bar_col]]), ]
         missing_count <- sum(is.na(combined[[input$bar_col]]))
+        bin_args <- if (!is.null(input$bar_bin_size)) list(size = input$bar_bin_size) else NULL
+
+        agg_df <- non_missing %>%
+          group_by(gene_list) %>%
+          do({
+            hist_res <- hist(.[[input$bar_col]],
+                             breaks = seq(min(.[[input$bar_col]], na.rm = TRUE),
+                                          max(.[[input$bar_col]], na.rm = TRUE) + input$bar_bin_size,
+                                          by = input$bar_bin_size),
+                             plot = FALSE)
+            data.frame(bin = hist_res$mids, count = hist_res$counts)
+          }) %>% ungroup()
+
         p <- plot_ly()
-        if(nrow(non_missing) > 0) {
-          bin_args <- if(!is.null(input$bar_bin_size)) list(size = input$bar_bin_size) else NULL
-          n_groups <- length(unique(non_missing$gene_list))
+        if (nrow(non_missing) > 0) {
           p <- add_histogram(p, data = non_missing, x = ~get(input$bar_col),
                              color = ~gene_list,
-                             histnorm = ifelse(input$bar_y_type=="% of genes", "percent", ""),
+                             histnorm = ifelse(input$bar_y_type == "% of genes", "percent", ""),
                              xbins = bin_args,
-                             colors = get_palette(input$color_palette, n_groups))
+                             colors = get_palette(input$color_palette, length(unique(non_missing$gene_list))))
         }
-        if(input$bar_show_na && missing_count > 0) {
+        if (input$bar_show_na && missing_count > 0) {
           p <- add_trace(p, x = "Missing", y = missing_count, type = "bar", name = "Missing")
         }
+        current_plot_df(agg_df)
       }
 
       p <- layout(p,
                   barmode = "group",
                   title = paste("Bar Chart/Histogram of", input$bar_col),
                   xaxis = list(title = input$bar_col),
-                  yaxis = list(title = ifelse(input$bar_y_type=="% of genes", "% of genes", "number of genes")))
+                  yaxis = list(title = ifelse(input$bar_y_type == "% of genes", "% of genes", "number of genes")))
 
-      # Add threshold lines if specified
-      if(is.numeric(combined[[input$bar_col]])) {
-        thresholdShapes <- list()
-        if(!is.na(input$bar_y_threshold1)) {
-          thresholdShapes[[length(thresholdShapes)+1]] <- list(
-            type = "line",
-            xref = "paper", x0 = 0, x1 = 1,
-            yref = "y", y0 = input$bar_y_threshold1, y1 = input$bar_y_threshold1,
-            line = list(dash = "dash", color = "red")
-          )
-        }
-        if(!is.na(input$bar_y_threshold2)) {
-          thresholdShapes[[length(thresholdShapes)+1]] <- list(
-            type = "line",
-            xref = "paper", x0 = 0, x1 = 1,
-            yref = "y", y0 = input$bar_y_threshold2, y1 = input$bar_y_threshold2,
-            line = list(dash = "dash", color = "red")
-          )
-        }
-        if(length(thresholdShapes) > 0) {
-          p <- p %>% layout(shapes = thresholdShapes)
-        }
+      thresholdShapes <- list()
+      if (!is.na(input$bar_y_threshold1)) {
+        thresholdShapes[[length(thresholdShapes) + 1]] <- list(
+          type = "line",
+          xref = "paper", x0 = 0, x1 = 1,
+          yref = "y", y0 = input$bar_y_threshold1, y1 = input$bar_y_threshold1,
+          line = list(dash = "dash", color = "red")
+        )
       }
-      current_plot_df(combined)
+      if (!is.na(input$bar_y_threshold2)) {
+        thresholdShapes[[length(thresholdShapes) + 1]] <- list(
+          type = "line",
+          xref = "paper", x0 = 0, x1 = 1,
+          yref = "y", y0 = input$bar_y_threshold2, y1 = input$bar_y_threshold2,
+          line = list(dash = "dash", color = "red")
+        )
+      }
+      if (length(thresholdShapes) > 0) {
+        p <- p %>% layout(shapes = thresholdShapes)
+      }
+
       return(p)
 
-    } else if(input$plot_type == "Violin/Box Plot") {
+    } else if (input$plot_type == "Violin/Box Plot") {
       if (is.null(input$violin_table) || input$violin_table == "" ||
           is.null(input$violin_col) || input$violin_col == "" ||
           is.null(input$violin_gene_lists) || length(input$violin_gene_lists) == 0)
@@ -955,24 +966,26 @@ server <- function(input, output, session) {
       gene_ids <- intersected_gene_ids()
       if (length(gene_ids) == 0) return(noDataPlot())
       df <- df[df$GeneID %in% gene_ids, ]
-      if(nrow(df)==0) return(noDataPlot())
+      if (nrow(df) == 0) return(noDataPlot())
 
       combined <- do.call(rbind, lapply(input$violin_gene_lists, function(listName) {
-        subset_genes <- if(listName=="Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
+        subset_genes <- if (listName == "Current List") gene_ids else saved_gene_lists$data[[listName]]$genes
         df_subset <- df[df$GeneID %in% subset_genes, , drop = FALSE]
-        if(nrow(df_subset)==0) return(NULL)
+        if (nrow(df_subset) == 0) return(NULL)
         df_subset$gene_list <- listName
         df_subset
       }))
-      if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+      if (is.null(combined) || nrow(combined) == 0) return(noDataPlot())
 
       df_non_missing <- combined[!is.na(combined[[input$violin_col]]), ]
-      if(nrow(df_non_missing)==0) return(noDataPlot())
+      if (nrow(df_non_missing) == 0) return(noDataPlot())
 
       gene_map <- gene_mapping()
       df_non_missing <- merge(df_non_missing, gene_map, by = "GeneID", all.x = TRUE)
       df_non_missing$hover_text <- paste("Gene:", df_non_missing$symbol,
                                          "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
+
+      current_plot_df(df_non_missing)
 
       n_groups <- length(unique(df_non_missing$gene_list))
       p <- plot_ly(
@@ -1011,25 +1024,25 @@ server <- function(input, output, session) {
       if(length(thresholdShapes) > 0) {
         p <- p %>% layout(shapes = thresholdShapes)
       }
-      current_plot_df(df_non_missing)
+
       return(p)
 
-    } else if(input$plot_type == "Scatter Plot") {
+    } else if (input$plot_type == "Scatter Plot") {
       if (is.null(input$scatter_table_x) || input$scatter_table_x == "" ||
           is.null(input$scatter_table_y) || input$scatter_table_y == "" ||
           is.null(input$scatter_x) || input$scatter_x == "" ||
           is.null(input$scatter_y) || input$scatter_y == "" ||
-          is.null(input$scatter_gene_lists) || length(input$scatter_gene_lists)==0)
+          is.null(input$scatter_gene_lists) || length(input$scatter_gene_lists) == 0)
         return(selectDataPlot())
 
       gene_ids <- intersected_gene_ids()
-      if(length(gene_ids)==0) return(noDataPlot())
+      if (length(gene_ids) == 0) return(noDataPlot())
 
       if (input$scatter_table_x == input$scatter_table_y) {
         df_joint <- filtered_data(input$scatter_table_x)()
         df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
-        if(nrow(df_joint)==0) return(noDataPlot())
-        if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
+        if (nrow(df_joint) == 0) return(noDataPlot())
+        if (!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
           return(noDataPlot())
       } else {
         df_x <- filtered_data(input$scatter_table_x)()
@@ -1037,25 +1050,26 @@ server <- function(input, output, session) {
         df_x <- df_x[df_x$GeneID %in% gene_ids, ]
         df_y <- df_y[df_y$GeneID %in% gene_ids, ]
         df_joint <- inner_join(df_x, df_y, by = "GeneID")
-        if(nrow(df_joint)==0) return(noDataPlot())
-        if(!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
+        if (nrow(df_joint) == 0) return(noDataPlot())
+        if (!(input$scatter_x %in% names(df_joint)) || !(input$scatter_y %in% names(df_joint)))
           return(noDataPlot())
       }
-
       df_joint <- df_joint[!is.na(df_joint[[input$scatter_x]]) & !is.na(df_joint[[input$scatter_y]]), ]
 
       combined <- do.call(rbind, lapply(input$scatter_gene_lists, function(listName) {
-        subset_genes <- if(listName == "Current List") intersected_gene_ids() else saved_gene_lists$data[[listName]]$genes
+        subset_genes <- if (listName == "Current List") gene_ids else saved_gene_lists$data[[listName]]$genes
         df_subset <- df_joint[df_joint$GeneID %in% subset_genes, , drop = FALSE]
-        if(nrow(df_subset)==0) return(NULL)
+        if (nrow(df_subset) == 0) return(NULL)
         df_subset$gene_list <- listName
         df_subset
       }))
-      if(is.null(combined) || nrow(combined)==0) return(noDataPlot())
+      if (is.null(combined) || nrow(combined) == 0) return(noDataPlot())
 
       gene_map <- gene_mapping()
       combined <- merge(combined, gene_map, by = "GeneID", all.x = TRUE)
       combined$hover_text <- paste("Gene:", combined$symbol)
+
+      current_plot_df(combined)
 
       n_groups <- length(unique(combined$gene_list))
       p <- plot_ly(
@@ -1068,13 +1082,11 @@ server <- function(input, output, session) {
         text = ~hover_text,
         hoverinfo = "text+x+y",
         colors = get_palette(input$color_palette, n_groups)
-      ) %>%
-        layout(title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
-               xaxis = list(title = input$scatter_x),
-               yaxis = list(title = input$scatter_y))
+      )
 
+      # Add threshold lines for scatter plot
       thresholdShapes <- list()
-      if(!is.na(input$scatter_x_threshold1)) {
+      if (!is.na(input$scatter_x_threshold1)) {
         thresholdShapes[[length(thresholdShapes)+1]] <- list(
           type = "line",
           x0 = input$scatter_x_threshold1, x1 = input$scatter_x_threshold1,
@@ -1084,7 +1096,7 @@ server <- function(input, output, session) {
           line = list(dash = "dash", color = "red")
         )
       }
-      if(!is.na(input$scatter_x_threshold2)) {
+      if (!is.na(input$scatter_x_threshold2)) {
         thresholdShapes[[length(thresholdShapes)+1]] <- list(
           type = "line",
           x0 = input$scatter_x_threshold2, x1 = input$scatter_x_threshold2,
@@ -1094,7 +1106,7 @@ server <- function(input, output, session) {
           line = list(dash = "dash", color = "red")
         )
       }
-      if(!is.na(input$scatter_y_threshold1)) {
+      if (!is.na(input$scatter_y_threshold1)) {
         thresholdShapes[[length(thresholdShapes)+1]] <- list(
           type = "line",
           xref = "paper", x0 = 0, x1 = 1,
@@ -1103,7 +1115,7 @@ server <- function(input, output, session) {
           line = list(dash = "dash", color = "red")
         )
       }
-      if(!is.na(input$scatter_y_threshold2)) {
+      if (!is.na(input$scatter_y_threshold2)) {
         thresholdShapes[[length(thresholdShapes)+1]] <- list(
           type = "line",
           xref = "paper", x0 = 0, x1 = 1,
@@ -1112,14 +1124,17 @@ server <- function(input, output, session) {
           line = list(dash = "dash", color = "red")
         )
       }
-      if(length(thresholdShapes) > 0) {
+      if (length(thresholdShapes) > 0) {
         p <- p %>% layout(shapes = thresholdShapes)
       }
 
-      current_plot_df(combined)
+      p <- layout(p,
+                  title = paste("Scatter Plot:", input$scatter_x, "vs", input$scatter_y),
+                  xaxis = list(title = input$scatter_x),
+                  yaxis = list(title = input$scatter_y))
       return(p)
 
-    } else if(input$plot_type == "Stacked Bar Chart") {
+    } else if (input$plot_type == "Stacked Bar Chart") {
       if (is.null(input$stack_table_x) || input$stack_table_x == "" ||
           is.null(input$stack_x) || input$stack_x == "" ||
           is.null(input$stack_table_y) || input$stack_table_y == "" ||
@@ -1127,24 +1142,24 @@ server <- function(input, output, session) {
           is.null(input$stack_gene_list) || input$stack_gene_list == "")
         return(selectDataPlot())
 
-      if(input$stack_table_x == input$stack_table_y) {
+      if (input$stack_table_x == input$stack_table_y) {
         df_joint <- filtered_data(input$stack_table_x)()
       } else {
         df_x <- filtered_data(input$stack_table_x)()
         df_y <- filtered_data(input$stack_table_y)()
         df_joint <- inner_join(df_x, df_y, by = "GeneID")
       }
-      if(nrow(df_joint)==0) return(noDataPlot())
+      if (nrow(df_joint) == 0) return(noDataPlot())
 
       gene_ids <- intersected_gene_ids()
-      if(length(gene_ids)==0) return(noDataPlot())
+      if (length(gene_ids) == 0) return(noDataPlot())
       df_joint <- df_joint[df_joint$GeneID %in% gene_ids, ]
-      if(nrow(df_joint)==0) return(noDataPlot())
+      if (nrow(df_joint) == 0) return(noDataPlot())
 
-      if(input$stack_gene_list != "Current List") {
+      if (input$stack_gene_list != "Current List") {
         subset_genes <- saved_gene_lists$data[[input$stack_gene_list]]$genes
         df_joint <- df_joint[df_joint$GeneID %in% subset_genes, ]
-        if(nrow(df_joint)==0) return(noDataPlot())
+        if (nrow(df_joint) == 0) return(noDataPlot())
       }
 
       xcol <- df_joint[[input$stack_x]]
@@ -1154,20 +1169,20 @@ server <- function(input, output, session) {
         bin_size <- if (!is.null(input$stack_bin_size)) input$stack_bin_size else ((max(xcol, na.rm = TRUE) - min(xcol, na.rm = TRUE)) / 50)
         bins <- seq(min(xcol, na.rm = TRUE), max(xcol, na.rm = TRUE) + bin_size, by = bin_size)
         df_joint$bin <- cut(xcol, breaks = bins, include.lowest = TRUE, right = FALSE)
-        if(input$stack_show_na_x) {
+        if (input$stack_show_na_x) {
           df_joint$bin <- as.character(df_joint$bin)
           df_joint$bin[is.na(xcol)] <- "Missing"
         }
       } else {
         df_joint$bin <- as.factor(xcol)
-        if(input$stack_show_na_x) {
+        if (input$stack_show_na_x) {
           df_joint$bin <- as.character(df_joint$bin)
           df_joint$bin[is.na(xcol)] <- "Missing"
         }
       }
 
       df_joint$group <- as.factor(ycol)
-      if(input$stack_show_na_y) {
+      if (input$stack_show_na_y) {
         df_joint$group <- as.character(df_joint$group)
         df_joint$group[is.na(ycol)] <- "Missing"
       }
@@ -1176,7 +1191,7 @@ server <- function(input, output, session) {
         group_by(bin, group) %>%
         summarise(count = n(), .groups = "drop") %>%
         ungroup()
-      if(input$stack_y_type == "% of genes") {
+      if (input$stack_y_type == "% of genes") {
         summary_df <- summary_df %>%
           group_by(bin) %>%
           mutate(percentage = count / sum(count) * 100) %>%
@@ -1188,52 +1203,54 @@ server <- function(input, output, session) {
         y_title <- "number of genes"
       }
 
-      n_groups <- length(unique(summary_df$group))
+      current_plot_df(summary_df)
+
       p <- plot_ly(data = summary_df,
                    x = ~bin,
                    y = ~y_val,
                    color = ~group,
                    type = "bar",
-                   colors = get_palette(input$color_palette, n_groups)) %>%
+                   colors = get_palette(input$color_palette, length(unique(summary_df$group)))) %>%
         layout(title = paste("Stacked Bar Chart: % of", input$stack_y, "by", input$stack_x),
                xaxis = list(title = input$stack_x),
                yaxis = list(title = y_title),
                barmode = "stack")
 
       thresholdShapes <- list()
-      if(!is.na(input$stack_y_threshold1)) {
-        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+      if (!is.na(input$stack_y_threshold1)) {
+        thresholdShapes[[length(thresholdShapes) + 1]] <- list(
           type = "line",
           xref = "paper", x0 = 0, x1 = 1,
           yref = "y", y0 = input$stack_y_threshold1, y1 = input$stack_y_threshold1,
           line = list(dash = "dash", color = "red")
         )
       }
-      if(!is.na(input$stack_y_threshold2)) {
-        thresholdShapes[[length(thresholdShapes)+1]] <- list(
+      if (!is.na(input$stack_y_threshold2)) {
+        thresholdShapes[[length(thresholdShapes) + 1]] <- list(
           type = "line",
           xref = "paper", x0 = 0, x1 = 1,
           yref = "y", y0 = input$stack_y_threshold2, y1 = input$stack_y_threshold2,
           line = list(dash = "dash", color = "red")
         )
       }
-      if(length(thresholdShapes) > 0) {
+      if (length(thresholdShapes) > 0) {
         p <- p %>% layout(shapes = thresholdShapes)
       }
 
-      current_plot_df(summary_df)
       return(p)
 
-    } else if(input$plot_type == "UpSet Plot") {
+    } else if (input$plot_type == "UpSet Plot") {
       req(input$plot_type == "UpSet Plot")
       sets <- gene_list_sets()
-      if(length(sets) < 2 || all(sapply(sets, length) < 2)) {
+      if (length(sets) < 2 || all(sapply(sets, length) < 2)) {
         plot.new()
         text(0.5, 0.5, "Select at least two gene lists to show UpSet Plot.")
         return()
       }
       m <- fromList(sets)
-      upset(m, order.by = "freq")
+      current_plot_df(sets)
+      p <- upset(m, order.by = "freq")
+      return(p)
     }
   })
 
@@ -1303,17 +1320,17 @@ server <- function(input, output, session) {
     upset(m, order.by = "freq")
   })
 
-  output$download_gene_lists_ui <- renderUI({
-    if(length(saved_gene_lists$data) == 0){
-      HTML("<em>Save gene lists to be able to download them</em>")
-    } else {
-      tagList(
-        selectInput("gene_list_file_type", "Select file type for saved gene lists:",
-                    choices = c("CSV", "TSV"), selected = "CSV"),
-        downloadButton("download_gene_lists", "Download Saved Gene Lists")
-      )
-    }
-  })
+  # output$download_gene_lists_ui <- renderUI({
+  #   if(length(saved_gene_lists$data) == 0){
+  #     HTML("<em>Save gene lists to be able to download them</em>")
+  #   } else {
+  #     tagList(
+  #       selectInput("gene_list_file_type", "Select file type for saved gene lists:",
+  #                   choices = c("CSV", "TSV"), selected = "CSV"),
+  #       downloadButton("download_gene_lists", "Download Saved Gene Lists")
+  #     )
+  #   }
+  # })
 
   observeEvent(input$save_gene_list, {
     showModal(modalDialog(
