@@ -109,6 +109,16 @@ ui <- page_navbar(
     .main.bslib-gap-spacing.html-fill-container {
       padding-left: 32px;
     }
+   /* Style the Plotly modebar */
+    .modebar {
+      background-color: #f0f0f0 !important;  /* light grey background */
+      border: none !important;               /* no border */
+      border-radius: 4px !important;         /* keeps rounded corners if desired */
+      position: absolute;
+      top: 0;
+      right: 0;
+      padding: 0 0 4px 4px;                   /* no padding on top/right, some on bottom/left */
+    }
 
     "))
   ),
@@ -313,7 +323,11 @@ ui <- page_navbar(
                                 ),
                                 hr(),
                                 selectInput("color_palette", "Select Color Palette:",
-                                            choices = c("NPG", "AAAS", "Lancet", "JCO", "NEJM", "D3", "Simpsons", "Rick and Morty"),
+                                            choices = c("NPG", "AAAS", "NEJM", "Lancet", "JAMA", "BMJ", "JCO",
+                                                        "UCSCGB", "D3", "Observable", "LocusZoom", "IGV", "COSMIC",
+                                                        "UChicago", "Star Trek", "Tron Legacy", "Futurama",
+                                                        "Rick and Morty", "The Simpsons", "Flat UI", "Frontiers",
+                                                        "GSEA", "Bootstrap 5", "Material Design", "Tailwind CSS"),
                                             selected = "NPG"),
                                 conditionalPanel(
                                   # Upset options ui ----
@@ -357,7 +371,6 @@ ui <- page_navbar(
                 )
               ),
               # MAIN PANEL ----
-
                 tabsetPanel(
                   tabPanel("Gene Table",
                            # TABLE TAB ----
@@ -368,7 +381,6 @@ ui <- page_navbar(
                   ),
                   # PLOT TAB ---
                   tabPanel("Plot",
-
                            # Updated card code for plot output; wrapped with spinner
                            withSpinner(uiOutput("plot_ui")),
                            # DT table and download button for plot data, wrapped with spinner
@@ -819,19 +831,54 @@ server <- function(input, output, session) {
       return(ggsci::pal_npg()(n))
     } else if(palette_name == "AAAS") {
       return(ggsci::pal_aaas()(n))
-    } else if(palette_name == "Lancet") {
-      return(ggsci::pal_lancet()(n))
-    } else if(palette_name == "JCO") {
-      return(ggsci::pal_jco()(n))
     } else if(palette_name == "NEJM") {
       return(ggsci::pal_nejm()(n))
+    } else if(palette_name == "Lancet") {
+      return(ggsci::pal_lancet()(n))
+    } else if(palette_name == "JAMA") {
+      return(ggsci::pal_jama()(n))
+    } else if(palette_name == "BMJ") {
+      return(ggsci::pal_bmj()(n))
+    } else if(palette_name == "JCO") {
+      return(ggsci::pal_jco()(n))
+    } else if(palette_name == "UCSCGB") {
+      return(ggsci::pal_ucscgb()(n))
     } else if(palette_name == "D3") {
       return(ggsci::pal_d3()(n))
-    } else if(palette_name == "Simpsons") {
-      return(ggsci::pal_simpsons()(n))
+    } else if(palette_name == "Observable") {
+      return(ggsci::pal_observable()(n))
+    } else if(palette_name == "LocusZoom") {
+      return(ggsci::pal_locuszoom()(n))
+    } else if(palette_name == "IGV") {
+      return(ggsci::pal_igv()(n))
+    } else if(palette_name == "COSMIC") {
+      return(ggsci::pal_cosmic()(n))
+    } else if(palette_name == "UChicago") {
+      return(ggsci::pal_uchicago()(n))
+    } else if(palette_name == "Star Trek") {
+      return(ggsci::pal_startrek()(n))
+    } else if(palette_name == "Tron Legacy") {
+      return(ggsci::pal_tron()(n))
+    } else if(palette_name == "Futurama") {
+      return(ggsci::pal_futurama()(n))
     } else if(palette_name == "Rick and Morty") {
       return(ggsci::pal_rickandmorty()(n))
+    } else if(palette_name == "The Simpsons") {
+      return(ggsci::pal_simpsons()(n))
+    } else if(palette_name == "Flat UI") {
+      return(ggsci::pal_flatui()(n))
+    } else if(palette_name == "Frontiers") {
+      return(ggsci::pal_frontiers()(n))
+    } else if(palette_name == "GSEA") {
+      return(ggsci::pal_gsea()(n))
+    } else if(palette_name == "Bootstrap 5") {
+      return(ggsci::pal_bs5()(n))
+    } else if(palette_name == "Material Design") {
+      return(ggsci::pal_material()(n))
+    } else if(palette_name == "Tailwind CSS") {
+      return(ggsci::pal_tw3()(n))
     } else {
+      # Default to NPG if the palette name is not recognized
       return(ggsci::pal_npg()(n))
     }
   }
@@ -936,7 +983,8 @@ server <- function(input, output, session) {
                   barmode = "group",
                   title = paste("Bar Chart/Histogram of", input$bar_col),
                   xaxis = list(title = input$bar_col),
-                  yaxis = list(title = ifelse(input$bar_y_type == "% of genes", "% of genes", "number of genes")))
+                  yaxis = list(title = ifelse(input$bar_y_type == "% of genes", "% of genes", "number of genes"))) %>%
+        config(displayModeBar = TRUE, displaylogo = FALSE)
 
       thresholdShapes <- list()
       if (!is.na(input$bar_y_threshold1)) {
@@ -1357,18 +1405,6 @@ server <- function(input, output, session) {
     m <- fromList(sets)
     upset(m, order.by = "freq")
   })
-
-  # output$download_gene_lists_ui <- renderUI({
-  #   if(length(saved_gene_lists$data) == 0){
-  #     HTML("<em>Save gene lists to be able to download them</em>")
-  #   } else {
-  #     tagList(
-  #       selectInput("gene_list_file_type", "Select file type for saved gene lists:",
-  #                   choices = c("CSV", "TSV"), selected = "CSV"),
-  #       downloadButton("download_gene_lists", "Download Saved Gene Lists")
-  #     )
-  #   }
-  # })
 
   observeEvent(input$save_gene_list, {
     showModal(modalDialog(
