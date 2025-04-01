@@ -1,3 +1,4 @@
+##### ========================= Libraries ========================= #####
 library(shiny)
 library(bslib)
 library(duckdb)
@@ -10,20 +11,20 @@ library(zip)
 library(UpSetR)
 library(shinyWidgets)
 library(shinycssloaders)
-# Optionally, to change button styling dynamically you could include shinyjs:
-# library(shinyjs)
 
-# Connect to DuckDB
+##### ========================= duckDB connect and access Tables ========================= #####
 con <- dbConnect(duckdb(), "mydb.duckdb")
 all_tables <- dbListTables(con)
 individual_tables <- setdiff(all_tables, "aggregated")
+##### ========================= User saved gene lists ========================= #####
 saved_gene_lists <- reactiveValues(data = list())
 
+##### ========================= UI ========================= #####
 ui <- page_navbar(
   title = "EGEx",
   padding = "0.4rem",
   theme = bs_theme(bootswatch = "cosmo"),
-  # Include custom CSS styles in the document head
+  ##### ========================= Custom CSS ========================= #####
   tags$head(
     tags$style(HTML("
       /* ================= Custom Sidebar CSS ================= */
@@ -122,11 +123,13 @@ ui <- page_navbar(
 
     "))
   ),
+  ##### ========================= Explore Data Page ========================= #####
   nav_panel("Explore Data",
             # SIDEBAR ----
             div(
               class = "custom-sidebar",
             page_sidebar(
+              ##### ========================= Sidebar ========================= #####
               sidebar = sidebar(
                 width = "500px",
                 open = c("open"),
@@ -135,10 +138,12 @@ ui <- page_navbar(
                     accordion(
                       accordion_panel(tagList(icon("list"), "Saved Gene Lists"), uiOutput("saved_gene_lists_ui"),
                                       actionButton("add_gene_list", "+ Save current gene list", class = "btn btn-success"), value = "saved"),
+                      ##### ========================= Table & plot options ========================= #####
                       # TABLE/PLOT OPTIONS ----
                       accordion_panel(
                         tagList(icon("columns"), "Gene Table/Plot Options"),
                         tagList(
+                          ##### ========================= Table options ========================= #####
                           accordion(
                             # TABLE OPTIONS ----
                             accordion_panel(
@@ -153,6 +158,7 @@ ui <- page_navbar(
                               ),
                               value = "table_options"
                             ),
+                            ##### ========================= Plot options ========================= #####
                             # PLOT OPTIONS ----
                             accordion_panel(
                               tagList(icon("sliders"), "Plot Options"),
@@ -168,6 +174,7 @@ ui <- page_navbar(
                                     "UpSet Plot"
                                   )
                                 ),
+                                ##### ========================= Bar/Histogram ========================= #####
                                 conditionalPanel(
                                   # Bar/histogram options ui ----
                                   condition = "input.plot_type == 'Bar Chart/Histogram'",
@@ -198,10 +205,10 @@ ui <- page_navbar(
                                     selected = "number of genes",
                                     inline = TRUE
                                   ),
-                                  # Note: Removed bar_x_threshold; now only two Y thresholds:
                                   numericInput("bar_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
                                   numericInput("bar_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1)
                                 ),
+                                ##### ========================= Box/Violin ========================= #####
                                 conditionalPanel(
                                   # Violin options ui ----
                                   condition = "input.plot_type == 'Violin/Box Plot'",
@@ -230,7 +237,9 @@ ui <- page_navbar(
                                                selected = "violin_box",
                                                inline = TRUE)
                                 ),
+                                ##### ========================= Scatter ========================= #####
                                 conditionalPanel(
+                                  # Scatter options ui ----
                                   condition = "input.plot_type == 'Scatter Plot'",
                                   hr(),
                                   fluidRow(
@@ -262,14 +271,13 @@ ui <- page_navbar(
                                   hr(),
                                   selectizeInput("scatter_gene_lists", "Select Gene List(s) to plot:", choices = NULL, selected = "Current List", multiple = TRUE),
                                   hr(),
-                                  # Scatter Plot keeps its X threshold...
                                   numericInput("scatter_x_threshold1", "X-axis Threshold 1 (optional):", value = NA, step = 1),
                                   numericInput("scatter_x_threshold2", "X-axis Threshold 2 (optional):", value = NA, step = 1),
-                                  # ...and now has two Y thresholds:
                                   numericInput("scatter_y_threshold1", "Y-axis Threshold 1 (optional):", value = NA, step = 1),
                                   numericInput("scatter_y_threshold2", "Y-axis Threshold 2 (optional):", value = NA, step = 1)
                                 ),
                                 conditionalPanel(
+                                  ##### ========================= Stacked bar ========================= #####
                                   # Stacked bar options ui ----
                                   condition = "input.plot_type == 'Stacked Bar Chart'",
                                   hr(),
@@ -329,6 +337,7 @@ ui <- page_navbar(
                                                         "Rick and Morty", "The Simpsons", "Flat UI", "Frontiers",
                                                         "GSEA", "Bootstrap 5", "Material Design", "Tailwind CSS"),
                                             selected = "NPG"),
+                                ##### ========================= Upset ========================= #####
                                 conditionalPanel(
                                   # Upset options ui ----
                                   condition = "input.plot_type == 'UpSet Plot'",
@@ -337,7 +346,7 @@ ui <- page_navbar(
                               ),
                               value = "plot_options"
                             ),
-                            open = "plot_options"  # Ensure that both nested panels are closed by default
+                            open = "plot_options"
                           )
                         ),
                         value = "options"
@@ -355,7 +364,6 @@ ui <- page_navbar(
                             column(12, actionButton("list_input", "Input custom list", width = "100%", class = "btn-primary"))
                           ),
                           hr(),
-                          # Dynamic filter inputs for each table (excluding GeneID)
                           lapply(individual_tables, function(tbl) {
                             tagList(
                               h5(tbl),
@@ -370,15 +378,18 @@ ui <- page_navbar(
                     )
                 )
               ),
+              ##### ========================= Main Panel ========================= #####
               # MAIN PANEL ----
                 tabsetPanel(
                   tabPanel("Gene Table",
+                           ##### ========================= Gene Table ========================= #####
                            # TABLE TAB ----
                            withSpinner(card(DT::dataTableOutput("aggregated_table"), full_screen = TRUE, height = 625)),
                            fluidRow(
                              column(3, downloadButton("download_agg_table", "Download Table"))
                            )
                   ),
+                  ##### ========================= Plot ========================= #####
                   # PLOT TAB ---
                   tabPanel("Plot",
                            # Updated card code for plot output; wrapped with spinner
@@ -396,13 +407,16 @@ ui <- page_navbar(
   )
 )
 
+##### ========================= Server ========================= #####
 server <- function(input, output, session) {
 
-  ### Reactive gene mapping from the "genes" table (assumes columns GeneID and gene_symbol)
+  ##### ========================= Reactive value for GeneID & Symbol mappings ========================= #####
+  ### Reactive gene mapping from the "genes" table (assumes columns 'GeneID' and 'symbol') (for showing symbols in Plotly Traces)
   gene_mapping <- reactive({
     dbReadTable(con, "genes")
   })
 
+  ##### ========================= Save gene lists (UI) ========================= #####
   ### SAVED GENE LISTS UI ###
   output$saved_gene_lists_ui <- renderUI({
     if(length(saved_gene_lists$data) == 0) {
@@ -424,6 +438,7 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= Save list Modal (UI) ========================= #####
   observeEvent(input$add_gene_list, {
     showModal(modalDialog(
       title = "Save Gene List",
@@ -436,6 +451,7 @@ server <- function(input, output, session) {
     ))
   })
 
+  ##### ========================= Apply filters (Server) ========================= #####
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -459,6 +475,7 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= Remove saved gene list (Server) ========================= #####
   observe({
     req(saved_gene_lists$data)
     for(name in names(saved_gene_lists$data)) {
@@ -472,6 +489,7 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= Current Filters HTML construction ========================= #####
   ### CURRENT FILTERS UI (for modal) ###
   output$current_filters <- renderUI({
     all_inputs <- reactiveValuesToList(input)
@@ -503,6 +521,7 @@ server <- function(input, output, session) {
     HTML(html_out)
   })
 
+  ##### ========================= Generate Filter for each Data Column (UI) ========================= #####
   ### HELPER FUNCTIONS & DYNAMIC FILTER UI ###
   lapply(individual_tables, function(tbl) {
     output[[paste0("filters_", tbl)]] <- renderUI({
@@ -533,6 +552,7 @@ server <- function(input, output, session) {
     })
   })
 
+  ##### ========================= Add Choices to Non-Numeric Filters ========================= #####
   # Update selectizeInput choices for non-numeric filters using server-side processing
   observe({
     for(tbl in individual_tables) {
@@ -551,6 +571,7 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= Function: Filter Data Table (Server) ========================= #####
   filtered_data <- function(tbl) {
     reactive({
       cols <- dbListFields(con, tbl)
@@ -562,6 +583,7 @@ server <- function(input, output, session) {
         na_id <- paste(input_id, "na", sep = "_")
         sample_val <- dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
         include_na <- isTRUE(input[[na_id]])
+        # Handle numeric inputs
         if (is.numeric(sample_val)) {
           slider_val <- input[[input_id]]
           if (!is.null(slider_val)) {
@@ -573,6 +595,7 @@ server <- function(input, output, session) {
             params <- c(params, slider_val[1], slider_val[2])
           }
         } else {
+          # Handle non-numeric (factor) inputs
           input_val <- input[[input_id]]
           if (!is.null(input_val)) {
             if("Has no data" %in% input_val) {
@@ -598,9 +621,10 @@ server <- function(input, output, session) {
         sql <- paste(sql, "WHERE", paste(conditions, collapse = " AND "))
       }
       dbGetQuery(con, sql, params = params)
-    }) |> debounce(500)
+    }) |> debounce(50)
   }
 
+  ##### ========================= Apply Filter Data All Tables: Intersect GeneIDs ========================= #####
   intersected_gene_ids <- reactive({
     filtered_ids <- lapply(individual_tables, function(tbl) {
       df <- filtered_data(tbl)()
@@ -610,6 +634,7 @@ server <- function(input, output, session) {
     Reduce(intersect, filtered_ids)
   })
 
+  ##### ========================= Render Gene Table ========================= #####
   output$aggregated_table <- DT::renderDataTable({
     req(input$agg_table)  # Ensure a table has been selected
     df <- dbReadTable(con, input$agg_table)
@@ -650,11 +675,13 @@ server <- function(input, output, session) {
     )
   })
 
+  ##### ========================= Observe Bar/Histogram Table choice in Plot Options ========================= #####
   observeEvent(input$bar_table, {
     cols <- dbListFields(con, input$bar_table)
     updateSelectInput(session, "bar_col", choices = c("", cols), selected = "")
   })
 
+  ##### ========================= Only Display Numeric choices for Violin/Box plots (Server)  ========================= #####
   valid_violin_tables <- reactive({
     valid <- sapply(individual_tables, function(tbl) {
       cols <- dbListFields(con, tbl)
@@ -667,6 +694,7 @@ server <- function(input, output, session) {
     individual_tables[valid]
   })
 
+  ##### ========================= Render Table options for Violin/Box plots (UI) ========================= #####
   output$violin_table_ui <- renderUI({
     valid_tables <- valid_violin_tables()
     if (length(valid_tables) == 0) {
@@ -677,6 +705,7 @@ server <- function(input, output, session) {
                 selected = valid_tables[1])
   })
 
+  ##### ========================= Violin/Box Table choice: Only display Numeric Column choices ========================= #####
   observeEvent(input$violin_table, {
     req(input$violin_table)
     tbl <- input$violin_table
@@ -688,21 +717,25 @@ server <- function(input, output, session) {
     updateSelectInput(session, "violin_col", choices = c("", cols[numeric_cols]), selected = "")
   })
 
+  ##### ========================= Scatter plot X axis: Change Column choices based on Table choice ========================= #####
   observeEvent(input$scatter_table_x, {
     cols_x <- dbListFields(con, input$scatter_table_x)
     updateSelectInput(session, "scatter_x", choices = c("", cols_x), selected = "")
   })
 
+  ##### ========================= Scatter plot Y axis: Change Column choices based on Table choice ========================= #####
   observeEvent(input$scatter_table_y, {
     cols_y <- dbListFields(con, input$scatter_table_y)
     updateSelectInput(session, "scatter_y", choices = c("", cols_y), selected = "")
   })
 
+  ##### ========================= Stacked Bar plot X axis: Change Column choices based on Table choice ========================= #####
   observeEvent(input$stack_table_x, {
     cols <- dbListFields(con, input$stack_table_x)
     updateSelectInput(session, "stack_x", choices = c("", cols), selected = "")
   })
 
+  ##### ========================= Stacked Bar Table choice X axis: Only display Numeric Column choices  ========================= #####
   valid_stack_y_tables <- reactive({
     valid <- sapply(individual_tables, function(tbl) {
       cols <- dbListFields(con, tbl)
@@ -715,6 +748,7 @@ server <- function(input, output, session) {
     individual_tables[valid]
   })
 
+  ##### ========================= Stacked Bar Table choice Y axis: Only display Numeric Column choices  ========================= #####
   output$stack_table_y_ui <- renderUI({
     valid_tables <- valid_stack_y_tables()
     if (length(valid_tables) == 0) {
@@ -725,6 +759,7 @@ server <- function(input, output, session) {
                 selected = valid_tables[1])
   })
 
+  ##### ========================= Stacked Bar Column choice Y axis: Only display Numeric Column choices  ========================= #####
   observeEvent(input$stack_table_y, {
     req(input$stack_table_y)
     tbl <- input$stack_table_y
@@ -743,6 +778,7 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= Update Gene Lists in Selection in Plot Options  ========================= #####
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
     updateSelectizeInput(session, "bar_gene_lists", choices = choices, selected = choices, server = TRUE)
@@ -752,6 +788,7 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "upset_gene_lists", choices = choices, selected = choices, server = TRUE)
   })
 
+  ##### ========================= Update Bar Chart Bin Size based on input ========================= #####
   output$bar_bin_size_ui <- renderUI({
     req(input$bar_table, input$bar_col)
     if(input$bar_col == "") return(NULL)
@@ -775,6 +812,7 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= Update Stacked Bar Chart Bin Size based on input ========================= #####
   output$stack_bin_size_ui <- renderUI({
     req(input$stack_table_x, input$stack_x)
     if(input$stack_x == "") return(NULL)
@@ -798,6 +836,7 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= No Data to Display plot ========================= #####
   # Helper function for no data (i.e. no intersecting geneIDs)
   noDataPlot <- function() {
     plot_ly() %>%
@@ -810,6 +849,7 @@ server <- function(input, output, session) {
              ))
   }
 
+  ##### ========================= No Data Selected plot ========================= #####
   # Helper function for when inputs are missing
   selectDataPlot <- function() {
     plot_ly() %>%
@@ -822,9 +862,11 @@ server <- function(input, output, session) {
              ))
   }
 
+  ##### ========================= Current Plots Dataframe  ========================= #####
   # Reactive value to store the data frame used for plotting
   current_plot_df <- reactiveVal(NULL)
 
+  ##### ========================= GGSCI Plot Palette Options ========================= #####
   # Helper function to return a palette vector given a palette name and number of colors
   get_palette <- function(palette_name, n) {
     if(palette_name == "NPG") {
@@ -883,6 +925,7 @@ server <- function(input, output, session) {
     }
   }
 
+  ##### ========================= Function: Current Plot being Displayed (Server) ========================= #####
   # Reactive plot object
   plot_obj <- reactive({
     req(input$plot_type)
@@ -1340,7 +1383,7 @@ server <- function(input, output, session) {
     }
   })
 
-
+  ##### ========================= Display Plot (UI) ========================= #####
   output$plot_ui <- renderUI({
     if (input$plot_type == "UpSet Plot") {
       withSpinner(plotOutput("upset_plot"))
@@ -1349,10 +1392,12 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= Display Plot (using plot_obj) ========================= #####
   output$plot_output <- renderPlotly({
     plot_obj()
   })
 
+  ##### ========================= Display Plot (using plot_obj) ========================= #####
   output$plot_data_table <- DT::renderDataTable({
     if (input$plot_type == "UpSet Plot") {
       DT::datatable(data.frame(Message = "Data table not available for UpSet Plot"), options = list(dom = 't'))
@@ -1366,6 +1411,7 @@ server <- function(input, output, session) {
     }
   })
 
+  ##### ========================= Handle Plot Data Download ========================= #####
   output$download_plot_df <- downloadHandler(
     filename = function() {
       paste0("plot_data_", Sys.Date(), ".csv")
@@ -1380,6 +1426,7 @@ server <- function(input, output, session) {
     }
   )
 
+  ##### ========================= Gene Lists for Upset Plot ========================= #####
   gene_list_sets <- reactive({
     available <- c("Current List", names(saved_gene_lists$data))
     sel <- input$upset_gene_lists
@@ -1394,6 +1441,7 @@ server <- function(input, output, session) {
     sets
   })
 
+  ##### ========================= Generate Upsetplot ========================= #####
   output$upset_plot <- renderPlot({
     req(input$plot_type == "UpSet Plot")
     sets <- gene_list_sets()
@@ -1406,6 +1454,7 @@ server <- function(input, output, session) {
     upset(m, order.by = "freq")
   })
 
+  ##### ========================= Save Gene List (UI) ========================= #####
   observeEvent(input$save_gene_list, {
     showModal(modalDialog(
       title = "Save Gene List",
@@ -1418,6 +1467,7 @@ server <- function(input, output, session) {
     ))
   })
 
+  ##### ========================= Save Gene List (Server) ========================= #####
   observeEvent(input$confirm_save, {
     req(input$gene_list_name)
     current_genes <- intersected_gene_ids()
@@ -1435,12 +1485,14 @@ server <- function(input, output, session) {
     removeModal()
   })
 
+  ##### ========================= Update Gene List selection for Scatter and Stack in Plot Options ========================= #####
   observe({
     choices <- c("Current List", names(saved_gene_lists$data))
     updateSelectizeInput(session, "scatter_gene_lists", choices = choices, selected = "Current List", server = TRUE)
     updateSelectizeInput(session, "stack_gene_list", choices = choices, selected = "Current List", server = TRUE)
   })
 
+  ##### ========================= Show Current filter (UI) ========================= #####
   observeEvent(input$show_filters, {
     showModal(modalDialog(
       title = "Current Filters",
@@ -1451,6 +1503,7 @@ server <- function(input, output, session) {
     ))
   })
 
+  ##### ========================= Reset filters ========================= #####
   observeEvent(input$clear_filters, {
     for(tbl in individual_tables) {
       cols <- dbListFields(con, tbl)
@@ -1471,7 +1524,7 @@ server <- function(input, output, session) {
     }
   })
 
-  ## --- LIST INPUT MODAL LOGIC ---
+  ##### ========================= Custom User List Input (UI) ========================= #####
   observeEvent(input$list_input, {
     showModal(modalDialog(
       title = "Filter custom list (genes, phenotypes etc)",
@@ -1520,6 +1573,7 @@ server <- function(input, output, session) {
     ))
   })
 
+  ##### ========================= Custom User List Input: Update Column Choices based on Table selected ========================= #####
   output$list_input_column_ui <- renderUI({
     req(input$list_input_table)
     tbl <- input$list_input_table
@@ -1527,6 +1581,7 @@ server <- function(input, output, session) {
     selectInput("list_input_column", "Select Column:", choices = cols, selected = cols[1])
   })
 
+  ##### ========================= Custom User List Input (Server) ========================= #####
   observeEvent(input$apply_list_input, {
     req(input$list_input_table, input$list_input_column, input$list_input_text, input$list_input_separator)
     tbl <- input$list_input_table
@@ -1568,8 +1623,8 @@ server <- function(input, output, session) {
       HTML(paste(message_parts, collapse = "<br>"))
     })
   })
-  ## --- END NEW LIST INPUT MODAL LOGIC ---
 
+  ##### ========================= Handle Gene Table Download ========================= #####
   # handle table download (with filters applied)
   output$download_agg_table <- downloadHandler(
     filename = function() {
