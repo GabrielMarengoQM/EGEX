@@ -11,6 +11,8 @@ library(zip)
 library(UpSetR)
 library(shinyWidgets)
 library(shinycssloaders)
+library(future)
+plan(multisession) # set up a future
 
 # Source Modules
 source("main_module.R")

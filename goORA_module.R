@@ -1,9 +1,10 @@
-# Gene Ontology ORA
+# Gene Ontology ORA Module using bslib
 library(shiny)
 library(bslib)
 library(clusterProfiler)
 library(org.Hs.eg.db)
 library(DT)
+library(shinycssloaders)
 
 goORAUI <- function(id, saved_gene_lists) {
   ns <- NS(id)
@@ -11,6 +12,7 @@ goORAUI <- function(id, saved_gene_lists) {
     selectizeInput(ns("gene_list_sel"),
                    "Select Gene List(s) to analyze:",
                    choices = NULL,
+                   selected = NULL,
                    multiple = FALSE),
     selectInput(ns("ontology"),
                 "Ontology",
@@ -34,24 +36,28 @@ goORAUI <- function(id, saved_gene_lists) {
 goORAServer <- function(id, con, saved_gene_lists) {
   moduleServer(id, function(input, output, session) {
 
+    # Get the gene mapping table from the database
     gene_mapping <- reactive({
       dbReadTable(con, "genes")
     })
 
     observe({
+      # Update the gene list select input based on saved_gene_lists$data names
       choices <- names(saved_gene_lists$data)
-      updateSelectizeInput(session, "gene_list_sel", choices = choices, selected = choices)
+      updateSelectizeInput(session, "gene_list_sel", choices = choices, selected = choices[1])
     })
 
     # Run analysis when button is clicked
     results <- eventReactive(input$run_go, {
-      print('RUNNING ANALYSIS')
+      print('RUNNING GO ANALYSIS')
 
       selectedLists <- input$gene_list_sel
-      genes <- saved_gene_lists$data[[input$gene_list_sel]]$genes
+      # Retrieve gene IDs from the selected saved gene list
+      genes <- saved_gene_lists$data[[selectedLists]]$genes
+      # Map GeneIDs to entrez IDs using gene_mapping()
       genes <- gene_mapping() %>%
-        filter(GeneID %in% genes) %>%
-        pull(entrez_id) %>%
+        dplyr::filter(GeneID %in% genes) %>%
+        dplyr::pull(entrez_id) %>%
         unique()
       if (length(genes) == 0) return(NULL)
 
@@ -65,15 +71,27 @@ goORAServer <- function(id, con, saved_gene_lists) {
       enrich_res
     })
 
-    # Render results as a DataTable
+    # Render results as a DataTable with error messages if necessary
     output$go_results <- DT::renderDataTable({
-      req(results())
-      as.data.frame(results())
+      validate(
+        need(!is.null(results()), "Error: Analysis did not return any results.")
+      )
+      df <- as.data.frame(results())
+      validate(
+        need(nrow(df) > 0, "Error: No significant GO terms found.")
+      )
+      df
     })
 
-    # Render a barplot of the top enriched GO terms
+    # Render a barplot of the top enriched GO terms with error messages if necessary
     output$go_plot <- renderPlot({
-      req(results())
+      validate(
+        need(!is.null(results()), "Error: Analysis did not return any results.")
+      )
+      df <- as.data.frame(results())
+      validate(
+        need(nrow(df) > 0, "Error: No significant GO terms found.")
+      )
       barplot(results(), showCategory = 10)
     })
 
@@ -83,7 +101,9 @@ goORAServer <- function(id, con, saved_gene_lists) {
         paste0("go_ORA_results_", Sys.Date(), ".csv")
       },
       content = function(file) {
-        req(results())
+        validate(
+          need(!is.null(results()), "Error: No results to download.")
+        )
         df <- as.data.frame(results())
         write.csv(df, file, row.names = FALSE)
       }

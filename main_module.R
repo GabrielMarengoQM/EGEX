@@ -672,7 +672,10 @@ mainModuleServer <- function(id, con, individual_tables, saved_gene_lists) {
             dbGetQuery(con, sprintf("SELECT %s FROM %s LIMIT 1", col, tbl))[[col]]
           }, error = function(e) NULL)
           if (!is.null(sample_val) && !is.numeric(sample_val)) {
-            choices <- c("All", "Has no data", unique(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]])[!is.na(unique(dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]]))])
+            queryVals <- dbGetQuery(con, sprintf("SELECT DISTINCT %s FROM %s", col, tbl))[[col]]
+            uniqueVals <- unique(queryVals)
+            uniqueVals <- uniqueVals[!is.na(uniqueVals)]
+            choices <- c("All", "Has no data", uniqueVals)
             updateSelectizeInput(session, input_id, choices = choices, server = TRUE)
           }
         }

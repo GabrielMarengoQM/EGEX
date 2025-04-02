@@ -12,6 +12,7 @@ reactomeORAUI <- function(id, saved_gene_lists) {
     selectizeInput(ns("gene_list_sel"),
                    "Select Gene List(s) to analyze:",
                    choices = NULL,
+                   selected = NULL,
                    multiple = FALSE),
     numericInput(ns("pvalueCutoff"),
                  "P-value cutoff",
@@ -32,24 +33,32 @@ reactomeORAUI <- function(id, saved_gene_lists) {
 reactomeORAServer <- function(id, con, saved_gene_lists) {
   moduleServer(id, function(input, output, session) {
 
+    # Retrieve gene mapping table from DB
     gene_mapping <- reactive({
       dbReadTable(con, "genes")
     })
 
+    # Update gene list choices from saved_gene_lists
     observe({
       choices <- names(saved_gene_lists$data)
-      updateSelectizeInput(session, "gene_list_sel", choices = choices, selected = choices)
+      updateSelectizeInput(session, "gene_list_sel", choices = choices, selected = choices[1])
     })
 
+    # Run analysis when button is clicked
     results <- eventReactive(input$run_reactome, {
       print("RUNNING REACTOME ANALYSIS")
 
       selectedLists <- input$gene_list_sel
-      genes <- saved_gene_lists$data[[input$gene_list_sel]]$genes
+      # Retrieve gene IDs from the selected saved gene list
+      genes <- saved_gene_lists$data[[selectedLists]]$genes
+
+      # Map the GeneIDs to entrez IDs using gene_mapping
       genes <- gene_mapping() %>%
-        filter(GeneID %in% genes) %>%
-        pull(entrez_id) %>%
+        dplyr::filter(GeneID %in% genes) %>%
+        dplyr::pull(entrez_id) %>%
         unique()
+
+      if (length(genes) == 0) return(NULL)
 
       # Run Reactome over-representation analysis using enrichPathway
       enrich_res <- enrichPathway(gene = genes,
@@ -60,15 +69,27 @@ reactomeORAServer <- function(id, con, saved_gene_lists) {
       enrich_res
     })
 
-    # Render results as a DataTable
+    # Render results as a DataTable with validation
     output$reactome_results <- DT::renderDataTable({
-      req(results())
-      as.data.frame(results())
+      validate(
+        need(!is.null(results()), "Error: Analysis did not return any results.")
+      )
+      df <- as.data.frame(results())
+      validate(
+        need(nrow(df) > 0, "Error: No significant Reactome pathways found.")
+      )
+      df
     })
 
-    # Render a barplot of the top enriched Reactome pathways
+    # Render a barplot of the top enriched Reactome pathways with validation
     output$reactome_plot <- renderPlot({
-      req(results())
+      validate(
+        need(!is.null(results()), "Error: Analysis did not return any results.")
+      )
+      df <- as.data.frame(results())
+      validate(
+        need(nrow(df) > 0, "Error: No significant Reactome pathways found.")
+      )
       barplot(results(), showCategory = 10)
     })
 
@@ -78,7 +99,9 @@ reactomeORAServer <- function(id, con, saved_gene_lists) {
         paste0("reactome_ORA_results_", Sys.Date(), ".csv")
       },
       content = function(file) {
-        req(results())
+        validate(
+          need(!is.null(results()), "Error: No results to download.")
+        )
         df <- as.data.frame(results())
         write.csv(df, file, row.names = FALSE)
       }
