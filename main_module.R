@@ -346,7 +346,6 @@ mainModuleServer <- function(id, con, individual_tables, saved_gene_lists) {
       req(input$gene_list_name)
       current_genes <- intersected_gene_ids()
       current_filters <- reactiveValuesToList(input)
-      print(current_filters)
       filter_keys <- names(current_filters)[sapply(names(current_filters), function(x) {
         any(sapply(individual_tables, function(tbl) {
           startsWith(x, paste0(tbl, "_"))

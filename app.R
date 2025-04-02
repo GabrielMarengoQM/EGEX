@@ -12,10 +12,15 @@ library(UpSetR)
 library(shinyWidgets)
 library(shinycssloaders)
 
-# Source your module file
+# Source Modules
 source("main_module.R")
-# print(exists("mainModuleUI"))
 main <- "something"
+
+source("goORA_module.R")
+goORA <- "goORA"
+
+source("reactomeORA_module.R")
+reactomeORA <- "reactomeORA"
 
 ##### ========================= duckDB connect and access Tables ========================= #####
 con <- dbConnect(duckdb(), "mydb.duckdb")
@@ -135,12 +140,13 @@ ui <- page_navbar(
   nav_panel("Explore Data",
             mainModuleUI(main, all_tables, individual_tables)
   ),
-  nav_panel("Enrichment Analysis",
+  nav_panel("Over-representation Analysis",
             tabsetPanel(
               tabPanel("Gene Ontology",
-
+                       goORAUI(goORA, saved_gene_lists)
               ),
               tabPanel("Reactome",
+                       reactomeORAUI(reactomeORA, saved_gene_lists)
 
               ),
               tabPanel("Custom",
@@ -155,8 +161,9 @@ ui <- page_navbar(
 ######################################################################
 server <- function(input, output, session) {
 
-  mainModuleServer(main,  con, individual_tables, saved_gene_lists) # pass DB connection
-
+  mainModuleServer(main,  con, individual_tables, saved_gene_lists)
+  goORAServer(goORA, con, saved_gene_lists)
+  reactomeORAServer(reactomeORA, con, saved_gene_lists)
 }
 
 shinyApp(ui, server)
