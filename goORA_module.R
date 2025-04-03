@@ -6,9 +6,6 @@ library(org.Hs.eg.db)
 library(DT)
 library(shinycssloaders)
 
-# Source helpers ----
-source('./helpers/goORA_helper.R')
-
 goORAUI <- function(id, saved_gene_lists) {
   ns <- NS(id)
   tagList(
@@ -65,19 +62,37 @@ goORAServer <- function(id, con, saved_gene_lists) {
       if (length(genes) == 0) return(NULL)
 
       # Run enrichGO using the user-specified parameters
-      enrich_res <- GoEnrichResult(enes, org.Hs.eg.db, input$ontology,
-                 input$pvalueCutoff, input$qvalueCutoff)
+      enrich_res <- enrichGO(gene          = genes,
+                             OrgDb         = org.Hs.eg.db,
+                             ont           = input$ontology,
+                             pvalueCutoff  = input$pvalueCutoff,
+                             qvalueCutoff  = input$qvalueCutoff,
+                             readable      = TRUE)
       enrich_res
     })
 
     # Render results as a DataTable with error messages if necessary
     output$go_results <- DT::renderDataTable({
-      results()[[1]]
+      validate(
+        need(!is.null(results()), "Error: Analysis did not return any results.")
+      )
+      df <- as.data.frame(results())
+      validate(
+        need(nrow(df) > 0, "Error: No significant GO terms found.")
+      )
+      df
     })
 
     # Render a barplot of the top enriched GO terms with error messages if necessary
     output$go_plot <- renderPlot({
-      results()[[2]]
+      validate(
+        need(!is.null(results()), "Error: Analysis did not return any results.")
+      )
+      df <- as.data.frame(results())
+      validate(
+        need(nrow(df) > 0, "Error: No significant GO terms found.")
+      )
+      dotplot(results(), showCategory = 10)
     })
 
     # Download handler for the results

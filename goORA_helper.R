@@ -1,12 +1,7 @@
-# reactomeORA_module.R Helpers
-ReactomeEnrichResult <- function(gene, organism, pvalueCutoff, qvalueCutoff) {
+# goORA_module.R Helpers
+GoEnrichResult <- function(gene, OrgDb, ont, pvalueCutoff, qvalueCutoff) {
 
-  # Enrichment
-  enrich_res <- enrichPathway(gene, #= genes,
-                              organism, #= "human",
-                              pvalueCutoff, #= input$pvalueCutoff,
-                              qvalueCutoff, #= input$qvalueCutoff,
-                              readable = TRUE)
+  enrich_res <- enrichGO(gene, OrgDb, ont, pvalueCutoff, qvalueCutoff)
 
   # Validate for results table
   validate(
@@ -30,3 +25,4 @@ ReactomeEnrichResult <- function(gene, organism, pvalueCutoff, qvalueCutoff) {
 
   return(list(plot, df))
 }
+

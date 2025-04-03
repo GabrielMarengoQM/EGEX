@@ -11,17 +11,15 @@ library(zip)
 library(UpSetR)
 library(shinyWidgets)
 library(shinycssloaders)
-library(future)
-plan(multisession) # set up a future
 
 # Source Modules
-source("./modules/main_module.R")
+source("main_module.R")
 main <- "something"
 
-source("./modules/goORA_module.R")
+source("goORA_module.R")
 goORA <- "goORA"
 
-source("./modules/reactomeORA_module.R")
+source("reactomeORA_module.R")
 reactomeORA <- "reactomeORA"
 
 ##### ========================= duckDB connect and access Tables ========================= #####

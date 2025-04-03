@@ -26,8 +26,6 @@ reactomeORAUI <- function(id, saved_gene_lists) {
     br(),
     withSpinner(plotOutput(ns("reactome_plot"))),
     fluidRow(column(3, downloadButton(ns("download_go"), "Download Results")))
-    # fluidRow(textOutput(ns('status'))),
-    # fluidRow(uiOutput(ns("plots")))
   )
 }
 
@@ -46,17 +44,6 @@ reactomeORAServer <- function(id, con, saved_gene_lists) {
       updateSelectizeInput(session, "gene_list_sel", choices = choices, selected = choices[1])
     })
 
-    # run_task <- ReactomeEnrichResult
-    #
-    # # outputs
-    # output$status <- renderText({reactive_status()})
-    #
-    # # reactive values
-    # reactive_results <- reactiveValues()
-    # reactive_status <- reactiveVal("No task submitted yet")
-    # reactive_poll <- reactiveVal(FALSE)
-    # error_msgs <- reactiveValues()
-
     # Run analysis when button is clicked
     results <- eventReactive(input$run_reactome, {
       print("RUNNING REACTOME ANALYSIS")
@@ -74,19 +61,37 @@ reactomeORAServer <- function(id, con, saved_gene_lists) {
       if (length(genes) == 0) return(NULL)
 
       # Run Reactome over-representation analysis using enrichPathway
-      enrich_res <- ReactomeEnrichResult(genes, "human", input$pvalueCutoff,
-                                         input$qvalueCutoff, readable = TRUE)
+      enrich_res <- enrichPathway(gene = genes,
+                                  organism = "human",
+                                  pvalueCutoff = input$pvalueCutoff,
+                                  qvalueCutoff = input$qvalueCutoff,
+                                  readable = TRUE)
       enrich_res
     })
 
     # Render results as a DataTable with validation
     output$reactome_results <- DT::renderDataTable({
-      results()[[1]]
+      validate(
+        need(!is.null(results()), "Error: Analysis did not return any results.")
+      )
+      df <- as.data.frame(results())
+      validate(
+        need(nrow(df) > 0, "Error: No significant Reactome pathways found.")
+      )
+      df
     })
 
     # Render a barplot of the top enriched Reactome pathways with validation
     output$reactome_plot <- renderPlot({
-      results()[[2]]
+      validate(
+        need(!is.null(results()), "Error: Analysis did not return any results.")
+      )
+      df <- as.data.frame(results())
+      validate(
+        need(nrow(df) > 0, "Error: No significant Reactome pathways found.")
+      )
+      # barplot(results(), showCategory = 10)
+      dotplot(results(), showCategory = 10)
     })
 
     # Download handler for the results
