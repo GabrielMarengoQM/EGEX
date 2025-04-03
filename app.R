@@ -15,13 +15,13 @@ library(future)
 plan(multisession) # set up a future
 
 # Source Modules
-source("main_module.R")
+source("./modules/main_module.R")
 main <- "something"
 
-source("goORA_module.R")
+source("./modules/goORA_module.R")
 goORA <- "goORA"
 
-source("reactomeORA_module.R")
+source("./modules/reactomeORA_module.R")
 reactomeORA <- "reactomeORA"
 
 ##### ========================= duckDB connect and access Tables ========================= #####
