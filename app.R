@@ -150,7 +150,6 @@ ui <- page_navbar(
 
               ),
               tabPanel("Custom",
-
               )
             )
             )

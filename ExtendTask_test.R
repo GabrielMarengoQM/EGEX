@@ -6,8 +6,8 @@ library(future)
 library(ggplot2)   # For ggsave
 plan(multisession)
 
-## UI: Use a bslib collapsible sidebar layout (page_sidebar)
-goORAUI <- function(id, saved_gene_lists) {
+## UI: Use a bslib collapsible sidebar layout (page_sidebar)  
+ExtendTaskUI <- function(id, saved_gene_lists) {
   ns <- NS(id)
   page_sidebar(
     sidebar = sidebar(
@@ -33,47 +33,47 @@ goORAUI <- function(id, saved_gene_lists) {
   )
 }
 
-## Server: Creates a new task each time the button is clicked
-goORAServer <- function(id, con, saved_gene_lists) {
+## Server: Creates a new task each time the button is clicked  
+ExtendTaskServer <- function(id, con, saved_gene_lists) {
   moduleServer(id, function(input, output, session) {
-
-    # Get the gene mapping table from the database
+    
+    # Get the gene mapping table from the database  
     gene_mapping <- reactive({
       dbReadTable(con, "genes")
     })
-
+    
     observe({
-      # Update the gene list select input based on saved_gene_lists$data names
+      # Update the gene list select input based on saved_gene_lists$data names  
       choices <- names(saved_gene_lists$data)
       updateSelectizeInput(session, "gene_list_sel", choices = choices, selected = choices[1])
     })
-
+    
     # Reactive list to store multiple ExtendedTask objects along with header info.
     # Each element is a list(task = <ExtendedTask>, header = <character>)
     tasks <- reactiveVal(list())
-
+    
     # When the "Run Analysis" button is pressed, create a new task.
     observeEvent(input$recalculate, {
-      # Capture the current reactive values
+      # Capture the current reactive values  
       localOntology <- isolate(input$ontology)
       localPvalueCutoff <- isolate(input$pvalueCutoff)
       localQvalueCutoff <- isolate(input$qvalueCutoff)
-
-      # Retrieve gene IDs from the selected saved gene list
+      
+      # Retrieve gene IDs from the selected saved gene list  
       genes <- saved_gene_lists$data[[input$gene_list_sel]]$genes
-      # Map GeneIDs to entrez IDs using gene_mapping()
+      # Map GeneIDs to entrez IDs using gene_mapping()  
       genes <- gene_mapping() %>%
         dplyr::filter(GeneID %in% genes) %>%
         dplyr::pull(entrez_id) %>%
         unique()
-
+      
       # Build a header string using the selected gene list and input parameters.
       header_info <- paste0("Gene List: ", input$gene_list_sel,
                             " | Ontology: ", localOntology,
                             " | P-value cutoff: ", localPvalueCutoff,
                             " | Q-value cutoff: ", localQvalueCutoff)
-
-      # Create a new ExtendedTask instance that accepts ontology, p-value, and q-value
+      
+      # Create a new ExtendedTask instance that accepts ontology, p-value, and q-value  
       new_task <- ExtendedTask$new(function(ont, pval, qval) {
         future({
           enrich_res <- enrichGO(
@@ -86,21 +86,21 @@ goORAServer <- function(id, con, saved_gene_lists) {
           enrich_res
         }, seed = TRUE)
       })
-
-      # Invoke the task with the captured parameters
+      
+      # Invoke the task with the captured parameters  
       new_task$invoke(localOntology, localPvalueCutoff, localQvalueCutoff)
-
-      # Append the new task and its header info to the list of tasks
+      
+      # Append the new task and its header info to the list of tasks  
       current_tasks <- tasks()
       current_tasks[[length(current_tasks) + 1]] <- list(task = new_task, header = header_info)
       tasks(current_tasks)
     })
-
+    
     # Dynamically generate a UI card (with a plot, table, and download buttons in the footer) for each task.
     output$results_ui <- renderUI({
       ns <- session$ns
       current_tasks <- tasks()
-
+      
       fluidRow(
         lapply(seq_along(current_tasks), function(i) {
           # Retrieve header info for task i.
@@ -130,7 +130,7 @@ goORAServer <- function(id, con, saved_gene_lists) {
         })
       )
     })
-
+    
     # For each task in the list, create corresponding plot, table, and download handlers.
     observe({
       current_tasks <- tasks()
@@ -142,7 +142,7 @@ goORAServer <- function(id, con, saved_gene_lists) {
           table_id <- paste0("table_task_", my_index)
           download_plot_id <- paste0("download_plot_", my_index)
           download_table_id <- paste0("download_table_", my_index)
-
+          
           # Plot output
           output[[plot_id]] <- renderPlot({
             enrich_res <- task_obj$result()
@@ -161,7 +161,7 @@ goORAServer <- function(id, con, saved_gene_lists) {
             }
             dotplot(enrich_res, showCategory = 10)
           })
-
+          
           # Table output
           output[[table_id]] <- renderDataTable({
             enrich_res <- task_obj$result()
@@ -172,7 +172,7 @@ goORAServer <- function(id, con, saved_gene_lists) {
             }
             datatable(df)
           })
-
+          
           # Download handler for plot
           output[[download_plot_id]] <- downloadHandler(
             filename = function() {
@@ -199,7 +199,7 @@ goORAServer <- function(id, con, saved_gene_lists) {
               }
             }
           )
-
+          
           # Download handler for table
           output[[download_table_id]] <- downloadHandler(
             filename = function() {
@@ -222,6 +222,6 @@ goORAServer <- function(id, con, saved_gene_lists) {
         })
       })
     })
-
+    
   })
 }
