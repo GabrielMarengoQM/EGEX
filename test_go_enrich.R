@@ -24,6 +24,11 @@ enrich_res_test <- enrichGO(
   qvalueCutoff  = 0.2
 )
 
+enrich_res_test <- enrichPathway(gene = genes_test,
+                            organism = "human",
+                            pvalueCutoff = 0.000005,
+                            qvalueCutoff = 0.2)
+
 # Checks if no enirched terms
 df <- as.data.frame(enrich_res_test)
 if(nrow(df) == 0) {
