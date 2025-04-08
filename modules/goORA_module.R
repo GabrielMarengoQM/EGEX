@@ -12,11 +12,13 @@ goORAUI <- function(id, saved_gene_lists) {
   page_sidebar(
     sidebar = sidebar(
       title = "Analysis Inputs",
+      h5('Query list:'),
       selectizeInput(ns("gene_list_sel"),
                      "Select Gene List(s) to analyze:",
                      choices = NULL,
                      selected = NULL,
                      multiple = FALSE),
+      hr(),
       selectInput(ns("ontology"),
                   "Ontology",
                   choices = c("BP", "MF", "CC"),

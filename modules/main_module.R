@@ -98,7 +98,7 @@ mainModuleUI <- function(id, all_tables, individual_tables) {
                                               uiOutput(ns("violin_table_ui"))
                                        ),
                                        column(6,
-                                              selectInput(ns("violin_col"), "Select numeric column:", choices = NULL)
+                                              selectizeInput(ns("violin_col"), "Select numeric column:", choices = NULL, multiple = TRUE)
                                        )
                                      ),
                                      hr(),
@@ -245,13 +245,34 @@ mainModuleUI <- function(id, all_tables, individual_tables) {
                                column(12, actionButton(ns("list_input"), "Input custom list", width = "100%", class = "btn-primary"))
                              ),
                              hr(),
+                             # DROPDOWN - CHOICES NOT WORKING
+                             # lapply(individual_tables, function(tbl) {
+                             #   tagList(
+                             #     dropdownButton(
+                             #       uiOutput(ns(paste0("filters_", tbl))),
+                             #       label = tbl,
+                             #       status = "primary",
+                             #       circle = FALSE,
+                             #       width = "300px"
+                             #     ),
+                             #     hr()
+                             #   )
+                             # })
+                             # ACCORDIAN
                              lapply(individual_tables, function(tbl) {
-                               tagList(
-                                 h5(tbl),
-                                 withSpinner(uiOutput(ns(paste0("filters_", tbl)))),
-                                 hr()
+                               accordion_panel(
+                                 title = tbl,
+                                 uiOutput(ns(paste0("filters_", tbl)))
                                )
                              })
+                             # ORIGINAL CODE
+                             # lapply(individual_tables, function(tbl) {
+                             #   tagList(
+                             #     h5(tbl),
+                             #     withSpinner(uiOutput(ns(paste0("filters_", tbl)))),
+                             #     hr()
+                             #   )
+                             # })
                            ),
                            value = "controls"
                          ),
@@ -372,7 +393,7 @@ mainModuleServer <- function(id, con, individual_tables, saved_gene_lists) {
             for(key in names(saved_filters)) {
               val <- saved_filters[[key]]
               if (is.logical(val)) {
-                updateCheckboxInput(session, key, value = val)
+                updateSwitchInput(session, key, value = val, onLabel = "include", offLabel = "exclude")
               } else if (is.numeric(val)) {
                 updateSliderInput(session, key, value = val)
               } else {
@@ -646,14 +667,14 @@ mainModuleServer <- function(id, con, individual_tables, saved_gene_lists) {
                           min = min(vals, na.rm = TRUE),
                           max = max(vals, na.rm = TRUE),
                           value = range(vals, na.rm = TRUE)),
-              checkboxInput(session$ns(na_id), label = "Include NA", value = TRUE)
+              switchInput(session$ns(na_id), value = TRUE, onLabel = "include", offLabel = "exclude", size = "mini")
             )
           } else {
             tagList(
               selectizeInput(session$ns(input_id), label = col,
                              choices = c("All", "Has no data"),
                              selected = "All", multiple = TRUE),
-              checkboxInput(session$ns(na_id), label = "Include NA", value = TRUE)
+              switchInput(session$ns(na_id), value = TRUE, onLabel = "include", offLabel = "exclude", size = "mini")
             )
           }
         })
@@ -802,7 +823,7 @@ mainModuleServer <- function(id, con, individual_tables, saved_gene_lists) {
           } else {
             updateSelectizeInput(session, input_id, selected = "All")
           }
-          updateCheckboxInput(session, na_id, value = TRUE)
+          updateSwitchInput(session, na_id, value = TRUE, onLabel = "include", offLabel = "exclude")
         }
       }
     })
@@ -1110,7 +1131,7 @@ mainModuleServer <- function(id, con, individual_tables, saved_gene_lists) {
 
       } else if (input$plot_type == "Violin/Box Plot") {
         if (is.null(input$violin_table) || input$violin_table == "" ||
-            is.null(input$violin_col) || input$violin_col == "" ||
+            is.null(input$violin_col) || length(input$violin_col) == 0 ||
             is.null(input$violin_gene_lists) || length(input$violin_gene_lists) == 0)
           return(selectDataPlot())
 
@@ -1131,61 +1152,78 @@ mainModuleServer <- function(id, con, individual_tables, saved_gene_lists) {
         }))
         if (is.null(combined) || nrow(combined) == 0) return(noDataPlot())
 
-        df_non_missing <- combined[!is.na(combined[[input$violin_col]]), ]
-        if (nrow(df_non_missing) == 0) return(noDataPlot())
+        # Pivot the data if multiple columns are selected.
+        # This creates a long-format data frame with a "variable" column and a "value" column.
+        if (length(input$violin_col) > 1) {
+          combined_long <- combined %>%
+            pivot_longer(
+              cols = all_of(input$violin_col),
+              names_to = "variable",
+              values_to = "value"
+            )
+        } else {
+          combined_long <- combined %>%
+            mutate(
+              variable = input$violin_col[1],
+              value = .[[input$violin_col[1]]]
+            )
+        }
 
-        gene_map <- gene_mapping()
-        df_non_missing <- merge(df_non_missing, gene_map, by = "GeneID", all.x = TRUE)
-        df_non_missing$hover_text <- paste("Gene:", df_non_missing$symbol,
-                                           "<br>", input$violin_col, ":", df_non_missing[[input$violin_col]])
+        df_non_missing <- combined_long %>% filter(!is.na(value))
+        if (nrow(df_non_missing) == 0) return(noDataPlot())
 
         current_plot_df(df_non_missing)
 
         n_groups <- length(unique(df_non_missing$gene_list))
 
+        # Build the plot using the split argument so that data for each selected column is shown in separate traces.
         if (input$violin_plot_style == "violin") {
           p <- plot_ly(
             data = df_non_missing,
-            y = ~get(input$violin_col),
+            y = ~value,
             type = "violin",
             box = list(visible = FALSE),
             meanline = list(visible = TRUE),
             points = ifelse(input$violin_show_points, "all", "outliers"),
-            text = ~hover_text,
+            text = ~paste("Gene:", GeneID, "<br>", variable, ":", value),
             hoverinfo = "text",
             color = ~gene_list,
+            split = ~variable,  # This ensures each selected column is split into its own trace.
             colors = get_palette(input$color_palette, n_groups)
           )
         } else if (input$violin_plot_style == "box") {
           p <- plot_ly(
             data = df_non_missing,
-            y = ~get(input$violin_col),
+            y = ~value,
             type = "box",
             points = ifelse(input$violin_show_points, "all", "outliers"),
-            text = ~hover_text,
+            text = ~paste("Gene:", GeneID, "<br>", variable, ":", value),
             hoverinfo = "text",
             color = ~gene_list,
+            split = ~variable,
             colors = get_palette(input$color_palette, n_groups)
           )
         } else if (input$violin_plot_style == "violin_box") {
           p <- plot_ly(
             data = df_non_missing,
-            y = ~get(input$violin_col),
+            y = ~value,
             type = "violin",
             box = list(visible = TRUE),
             meanline = list(visible = TRUE),
             points = ifelse(input$violin_show_points, "all", "outliers"),
-            text = ~hover_text,
+            text = ~paste("Gene:", GeneID, "<br>", variable, ":", value),
             hoverinfo = "text",
             color = ~gene_list,
+            split = ~variable,
             colors = get_palette(input$color_palette, n_groups)
           )
         }
 
         p <- layout(p,
-                    title = paste("Violin/Box Plot of", input$violin_col),
-                    yaxis = list(title = input$violin_col))
+                    title = paste("Violin/Box Plot of", paste(input$violin_col, collapse = ", ")),
+                    yaxis = list(title = "Value"))
 
+        # Add threshold lines if needed.
         thresholdShapes <- list()
         if (!is.na(input$violin_y_threshold1)) {
           thresholdShapes[[length(thresholdShapes) + 1]] <- list(

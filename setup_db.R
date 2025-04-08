@@ -17,7 +17,7 @@ if (file.exists(wal_file)) {
 con <- dbConnect(duckdb(), db_file)
 
 # File names to read in working directory
-table_names <- c("genes", "impc_viability", "impc_phenotypes", "impc_wol", "omim_phenotypes_lethality", "omim_lethal_genes", "constraint_metrics")
+table_names <- c("genes", "impc_viability", "impc_phenotypes", "impc_wol", "omim_phenotypes_lethality", "omim_lethal_genes", "constraint_metrics", "GTEx_expression", "Huangfu24", "FUSIL", "string_ppi", "hpo_genes_to_phenotype", "hpo_genes_to_disease", "pantherdb")
 
 # Read files & write to DuckDB
 for (tbl in table_names) {
