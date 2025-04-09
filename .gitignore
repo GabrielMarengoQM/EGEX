@@ -5,8 +5,9 @@
 .Ruserdata
 *.Rproj
 
-# DuckDB databases (if you prefer not to commit large files)
-*.duckdb
+# DuckDB setup files
+setup_db.R
+create_aggregated_table.R
 
 # Parquet files (optional, if large or sensitive)
 *.parquet
@@ -19,3 +20,6 @@
 
 # rsconnect files
 rsconnect/
+
+# Random files
+test_go_enrich.R

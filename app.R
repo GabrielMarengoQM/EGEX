@@ -38,6 +38,7 @@ saved_gene_lists <- reactiveValues(data = list())
 ####### ========================= UI ========================= #######
 ######################################################################
 ui <- page_navbar(
+  id = "main_nav",                # Set ID for programmatic updates
   title = "EGEx",
   padding = "0.4rem",
   theme = bs_theme(bootswatch = "cosmo"),
@@ -45,10 +46,21 @@ ui <- page_navbar(
   tags$head(
     tags$link(rel = "stylesheet", type = "text/css", href = "styles.css")
   ),
+  ##### ========================= Home Page ========================= #####
+  nav_panel("Home",
+            fluidPage(
+              h3("Welcome to EGEx"),
+              fluidRow(
+                column(6, actionButton("go_explore", "Go to Explore Data", class = "btn-primary")),
+                column(6, actionButton("go_overrep", "Go to Over-representation Analysis", class = "btn-primary"))
+              )
+            )
+  ),
   ##### ========================= Explore Data Page ========================= #####
   nav_panel("Explore Data",
             mainModuleUI(main, all_tables, individual_tables)
   ),
+  ##### ========================= Over-representation Analysis ========================= #####
   nav_panel("Over-representation Analysis",
             tabsetPanel(
               tabPanel("Gene Ontology",
@@ -56,13 +68,17 @@ ui <- page_navbar(
               ),
               tabPanel("Reactome",
                        reactomeORAUI(reactomeORA, saved_gene_lists)
-
               ),
               tabPanel("OddsRatio",
                        oddsRatioUI(oddsRatio, saved_gene_lists)
               )
             )
-            )
+  ),
+  ##### ========================= Explore Data Page ========================= #####
+  nav_panel("Downloads",
+
+  )
+
 )
 
 ######################################################################
@@ -70,10 +86,23 @@ ui <- page_navbar(
 ######################################################################
 server <- function(input, output, session) {
 
+  # Call module server functions
   mainModuleServer(main,  con, individual_tables, saved_gene_lists)
   goORAServer(goORA, con, saved_gene_lists)
   reactomeORAServer(reactomeORA, con, saved_gene_lists)
   oddsRatioServer(oddsRatio, con, saved_gene_lists)
+
+  # Navigation Observers:
+  # When the "Go to Explore Data" button is clicked, update the navbar to "Explore Data"
+  observeEvent(input$go_explore, {
+    updateNavbarPage(session, "main_nav", selected = "Explore Data")
+  })
+
+  # When the "Go to Over-representation Analysis" button is clicked,
+  # update the navbar to "Over-representation Analysis"
+  observeEvent(input$go_overrep, {
+    updateNavbarPage(session, "main_nav", selected = "Over-representation Analysis")
+  })
 }
 
 shinyApp(ui, server)
