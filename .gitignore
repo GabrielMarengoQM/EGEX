@@ -6,7 +6,7 @@
 *.Rproj
 
 # DuckDB databases (if you prefer not to commit large files)
-*.duckdb
+# *.duckdb
 
 # Parquet files (optional, if large or sensitive)
 *.parquet
@@ -19,3 +19,9 @@
 
 # rsconnect files
 rsconnect/
+
+create_aggregated_table.R
+
+create_dummy_data.R
+
+setup_db.R
