@@ -1,59 +1,44 @@
-# Gene Essentiality Database Explorer
+```markdown
+## Gene Essentiality Database Explorer
 
-This Shiny app provides a continuously updated database for gene-level annotations associated with gene essentiality. It is designed to facilitate the exploration, filtering, and analysis of genes using real-time data from a DuckDB database.
+A lightweight Shiny app for browsing and filtering up-to-date gene essentiality annotations stored in DuckDB.
 
-## Features
+### Key Features
 
-- **Dynamic Database Integration:**  
-  The app leverages a DuckDB database to store and query gene annotations and related data. It dynamically adapts to changes in the underlying database, making it easy to update with new data.
+- **Live DuckDB backend**: Queries a local DuckDB database for fast, on-the-fly data access.  
+- **Dynamic filters**: UI inputs are generated automatically from the database schema.  
+- **Interactive tables & plots**: Built with Reactable and Plotly for sorting, paging, zooming, etc.  
+- **Exportable data**: Download your filtered view as a CSV for downstream analyses.
 
-- **Comprehensive Gene Annotations:**  
-  The database includes gene-level annotations such as:
-  - Gene identifiers and symbols
-  - Phenotype associations
-  - Constraint metrics
-  - Expression levels
-  - Pathway involvement
-  - Variant details
-  - Publications, protein interactions, disease associations, and functional annotations
+### Quickstart
 
-- **Flexible Filtering:**  
-  Dynamically generated UI components allow users to filter data by various columns (e.g., Gene Symbol, Essentiality Metric, Score, etc.) without any hard-coded inputs. This is achieved using functional programming techniques that automatically generate filters based on the database schema.
+1. **Clone the repo**  
+   ```bash
+   git clone https://github.com/GabrielMarengoQM/EGEX.git
+   cd EGEX
+   ```
+2. **Install R dependencies**  
+   In R or RStudio, run:
+   ```r
+   install.packages(c("shiny", "duckdb", "arrow", "reactable", "plotly"))
+   ```
+3. **Prepare the database**  
+   ```bash
+   Rscript create_dummy_data.R
+   Rscript setup_db.R
+   ```
+4. **Launch the app**  
+   ```bash
+   Rscript -e "shiny::runApp('app.R', port = 3838)"
+   ```
+   Then open <http://localhost:3838> in your browser.
 
-- **Interactive Visualization:**  
-  The app utilizes Reactable for interactive table displays and Plotly for dynamic plotting. Users can interact with tables and plots to gain insights into gene essentiality patterns and related annotations.
+### License
 
-- **Data Export:**  
-  Users have the option to download filtered datasets for further analysis.
+MIT — see [LICENSE](LICENSE)
 
-## Getting Started
+### Questions?
 
-1. **Data Setup:**  
-   - Run `create_dummy_data.R` to generate the initial dummy data.
-   - Run `setup_db.R` to populate the DuckDB database with the generated data.
+Contact Gabriel Marengo at <your.email@example.com>.
+```
 
-2. **Run the App:**  
-   Launch the Shiny app by running `app.R` in RStudio.
-
-3. **GitHub Integration:**  
-   The project is fully integrated with Git for version control. You can push updates directly from RStudio or the terminal.
-
-## Purpose
-
-This app is intended to serve as a powerful tool for researchers and analysts who need to explore and analyze gene-level annotations associated with gene essentiality. By providing a robust, continuously updated database with flexible filtering, plotting, and analysis options, the app supports rapid insights into the genetic factors underpinning essentiality.
-
-## Technologies
-
-- **R and Shiny:** For the interactive web application.
-- **DuckDB:** As the backend database for efficient querying and data storage.
-- **Arrow:** For reading and writing Parquet files.
-- **Reactable & Plotly:** For interactive tables and visualizations.
-- **Functional Programming (lapply, map, etc.):** For dynamic generation of UI and server logic.
-
-## License
-
-This project is open-source and available under the [MIT License](LICENSE).
-
-## Contact
-
-For any questions or feedback, please reach out to [Your Name](mailto:your.email@example.com).
