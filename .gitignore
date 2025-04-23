@@ -1,0 +1,21 @@
+# R project files
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# DuckDB databases (if you prefer not to commit large files)
+*.duckdb
+
+# Parquet files (optional, if large or sensitive)
+*.parquet
+
+# Log files
+*.log
+
+# MacOS files
+.DS_Store
+
+# rsconnect files
+rsconnect/
